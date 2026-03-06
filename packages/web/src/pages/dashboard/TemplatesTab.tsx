@@ -78,7 +78,8 @@ export function TemplatesTab({ apiUrl }: { apiUrl: string }) {
         <CardHeader>
           <CardTitle>New Template</CardTitle>
           <CardDescription>
-            Save frequently used messages. Use <code className="text-xs">{"{name}"}</code>, <code className="text-xs">{"{word1}"}</code> etc. for variables — these work with Bulk Messages.
+            Save frequently used messages. Use <code className="text-xs">{"{name}"}</code>, <code className="text-xs">{"{word1}"}</code> etc. for variables.
+            Templates are available in Bulk Messages and Schedule tabs.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

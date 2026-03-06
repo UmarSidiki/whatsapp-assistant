@@ -14,10 +14,15 @@ router.post("/response", aiController.generateResponse);
 router.get("/settings", aiController.getSettings);
 router.post("/settings", aiController.updateSettings);
 
-// API Keys Management
+// API Keys Management - Groq
 router.post("/api-keys/groq", aiController.addGroqApiKey);
 router.delete("/api-keys/groq/:keyId", aiController.removeGroqApiKey);
 router.get("/api-keys/groq", aiController.getGroqApiKeys);
+
+// API Keys Management - Gemini
+router.post("/api-keys/gemini", aiController.addGeminiApiKey);
+router.delete("/api-keys/gemini/:keyId", aiController.removeGeminiApiKey);
+router.get("/api-keys/gemini", aiController.getGeminiApiKeys);
 
 // Contacts list
 router.get("/contacts", aiController.getContacts);

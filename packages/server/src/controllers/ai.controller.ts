@@ -7,7 +7,7 @@ import * as aiAssistantService from "../services/ai-assistant.service";
 import * as apiUsageService from "../services/api-usage.service";
 import { db } from "../db";
 import { aiSettings, apiKeys } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { auth } from "../lib/auth";
 
@@ -115,6 +115,7 @@ export async function getSettings(c: Context) {
           fallbackProvider: "gemini",
           groqModel: "llama-3.1-8b-instant",
           fallbackGroqModel: "llama-3.1-70b-versatile",
+          geminiModel: "gemini-2.0-flash",
         };
       }
 
@@ -125,6 +126,7 @@ export async function getSettings(c: Context) {
         fallbackProvider: settings.fallbackProvider,
         groqModel: settings.groqModel,
         fallbackGroqModel: settings.fallbackGroqModel,
+        geminiModel: settings.geminiModel,
       };
     } catch (error) {
       logger.error("Failed to get settings", { error: String(error), userId });
@@ -147,7 +149,7 @@ export async function updateSettings(c: Context) {
     }
 
     const body = await c.req.json();
-    const { aiEnabled, primaryProvider, fallbackProvider, groqModel, fallbackGroqModel } = body;
+    const { aiEnabled, primaryProvider, fallbackProvider, groqModel, fallbackGroqModel, geminiModel } = body;
 
     // Validate input
     if (aiEnabled !== undefined && typeof aiEnabled !== "boolean") {
@@ -173,6 +175,9 @@ export async function updateSettings(c: Context) {
     if (fallbackGroqModel !== undefined && typeof fallbackGroqModel !== "string") {
       throw new ProviderError("Invalid fallbackGroqModel: must be string", 400);
     }
+    if (geminiModel !== undefined && typeof geminiModel !== "string") {
+      throw new ProviderError("Invalid geminiModel: must be string", 400);
+    }
 
     try {
       const now = new Date();
@@ -193,6 +198,7 @@ export async function updateSettings(c: Context) {
           fallbackProvider: (fallbackProvider ?? "gemini") as "groq" | "gemini",
           groqModel: groqModel ?? "llama-3.1-8b-instant",
           fallbackGroqModel: fallbackGroqModel ?? "llama-3.1-70b-versatile",
+          geminiModel: geminiModel ?? "gemini-2.0-flash",
           createdAt: now,
           updatedAt: now,
         });
@@ -202,6 +208,7 @@ export async function updateSettings(c: Context) {
           fallbackProvider: fallbackProvider ?? "gemini",
           groqModel: groqModel ?? "llama-3.1-8b-instant",
           fallbackGroqModel: fallbackGroqModel ?? "llama-3.1-70b-versatile",
+          geminiModel: geminiModel ?? "gemini-2.0-flash",
         };
       } else {
         // Update existing settings
@@ -211,6 +218,7 @@ export async function updateSettings(c: Context) {
         if (fallbackProvider) updateData.fallbackProvider = fallbackProvider;
         if (groqModel !== undefined) updateData.groqModel = groqModel;
         if (fallbackGroqModel !== undefined) updateData.fallbackGroqModel = fallbackGroqModel;
+        if (geminiModel !== undefined) updateData.geminiModel = geminiModel;
 
         await db.update(aiSettings).set(updateData).where(eq(aiSettings.userId, userId)).run();
 
@@ -229,6 +237,7 @@ export async function updateSettings(c: Context) {
               fallbackProvider: settings.fallbackProvider ?? undefined,
               groqModel: settings.groqModel,
               fallbackGroqModel: settings.fallbackGroqModel ?? undefined,
+              geminiModel: settings.geminiModel ?? undefined,
             }
           : {
               aiEnabled: true,
@@ -236,6 +245,7 @@ export async function updateSettings(c: Context) {
               fallbackProvider: "gemini",
               groqModel: "llama-3.1-8b-instant",
               fallbackGroqModel: "llama-3.1-70b-versatile",
+              geminiModel: "gemini-2.0-flash",
             };
       }
 
@@ -431,7 +441,7 @@ export async function getGroqApiKeys(c: Context) {
       const keys = await db
         .select({ id: apiKeys.id, name: apiKeys.name, keyValue: apiKeys.keyValue, createdAt: apiKeys.createdAt })
         .from(apiKeys)
-        .where(eq(apiKeys.userId, userId));
+        .where(and(eq(apiKeys.userId, userId), eq(apiKeys.provider, "groq")));
 
       return { keys };
     } catch (error) {
@@ -527,6 +537,120 @@ export async function removeGroqApiKey(c: Context) {
     } catch (error) {
       if (error instanceof ProviderError) throw error;
       logger.error("Failed to remove API key", { error: String(error), userId, keyId });
+      throw new ProviderError("Failed to remove API key", 500);
+    }
+  });
+}
+
+/**
+ * GET /api/ai/api-keys/gemini
+ * Get all Gemini API keys for the user
+ */
+export async function getGeminiApiKeys(c: Context) {
+  return handle(c, async () => {
+    const userId = await extractUserIdFromContext(c);
+    if (!userId) {
+      throw new ProviderError("Unauthorized: No user session", 401);
+    }
+
+    try {
+      const keys = await db
+        .select({ id: apiKeys.id, name: apiKeys.name, keyValue: apiKeys.keyValue, createdAt: apiKeys.createdAt })
+        .from(apiKeys)
+        .where(and(eq(apiKeys.userId, userId), eq(apiKeys.provider, "gemini")));
+
+      return { keys };
+    } catch (error) {
+      logger.error("Failed to get Gemini API keys", { error: String(error), userId });
+      throw new ProviderError("Failed to retrieve API keys", 500);
+    }
+  });
+}
+
+/**
+ * POST /api/ai/api-keys/gemini
+ * Add a new Gemini API key
+ */
+export async function addGeminiApiKey(c: Context) {
+  return handle(c, async () => {
+    const userId = await extractUserIdFromContext(c);
+    if (!userId) {
+      throw new ProviderError("Unauthorized: No user session", 401);
+    }
+
+    const body = await c.req.json();
+    const { keyValue, name } = body;
+
+    if (!keyValue || typeof keyValue !== "string" || !keyValue.trim()) {
+      throw new ProviderError("API key value is required", 400);
+    }
+
+    try {
+      const keyId = crypto.randomUUID();
+      const now = new Date();
+
+      await db.insert(apiKeys).values({
+        id: keyId,
+        userId,
+        provider: "gemini",
+        keyValue: keyValue.trim(),
+        name: name || undefined,
+        createdAt: now,
+      });
+
+      logger.info("Gemini API key added", { userId, keyId });
+
+      return {
+        success: true,
+        key: {
+          id: keyId,
+          name: name || undefined,
+          keyValue: keyValue.trim(),
+          createdAt: now.toISOString(),
+        },
+      };
+    } catch (error) {
+      logger.error("Failed to add Gemini API key", { error: String(error), userId });
+      throw new ProviderError("Failed to add API key", 500);
+    }
+  });
+}
+
+/**
+ * DELETE /api/ai/api-keys/gemini/:keyId
+ * Remove a Gemini API key
+ */
+export async function removeGeminiApiKey(c: Context) {
+  return handle(c, async () => {
+    const userId = await extractUserIdFromContext(c);
+    if (!userId) {
+      throw new ProviderError("Unauthorized: No user session", 401);
+    }
+
+    const keyId = c.req.param("keyId");
+    if (!keyId) {
+      throw new ProviderError("Key ID is required", 400);
+    }
+
+    try {
+      const key = await db
+        .select()
+        .from(apiKeys)
+        .where(eq(apiKeys.id, keyId))
+        .limit(1);
+
+      if (key.length === 0 || key[0].userId !== userId) {
+        throw new ProviderError("API key not found or unauthorized", 404);
+      }
+
+      await db.delete(apiKeys).where(eq(apiKeys.id, keyId)).run();
+
+      logger.info("Gemini API key removed", { userId, keyId });
+
+      return { success: true, message: "API key removed" };
+    } catch (error) {
+      if (error instanceof ProviderError) throw error;
+      logger.error("Failed to remove Gemini API key", { error: String(error), userId, keyId });
       throw new ProviderError("Failed to remove API key", 500);
     }
   });

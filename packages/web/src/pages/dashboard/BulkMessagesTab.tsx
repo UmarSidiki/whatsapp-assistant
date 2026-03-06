@@ -8,6 +8,13 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface BulkJob {
   total: number;
@@ -20,6 +27,12 @@ interface BulkJob {
 interface BulkContact {
   phone: string;
   [key: string]: string;
+}
+
+interface Template {
+  id: string;
+  name: string;
+  content: string;
 }
 
 function parseContacts(raw: string): BulkContact[] {
@@ -50,6 +63,7 @@ export function BulkMessagesTab({ apiUrl }: { apiUrl: string }) {
   const [job, setJob] = useState<BulkJob | null>(null);
   const [error, setError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [templates, setTemplates] = useState<Template[]>([]);
 
   const contacts = parseContacts(contactsRaw);
   const preview = interpolatePreview(template, contacts);
@@ -57,7 +71,16 @@ export function BulkMessagesTab({ apiUrl }: { apiUrl: string }) {
   const stopPolling = () => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   };
-  useEffect(() => stopPolling, []);
+
+  useEffect(() => {
+    // Load saved templates
+    fetch(`${apiUrl}/api/whatsapp/templates`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => { if (data?.templates) setTemplates(data.templates); })
+      .catch(() => {});
+    return stopPolling;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const pollStatus = () => {
     stopPolling();
@@ -131,6 +154,26 @@ export function BulkMessagesTab({ apiUrl }: { apiUrl: string }) {
             <CardDescription>Use <code className="text-xs">{"{name}"}</code>, <code className="text-xs">{"{word1}"}</code> for personalisation.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {templates.length > 0 && (
+              <div className="space-y-2">
+                <Label>Load from saved templates</Label>
+                <Select onValueChange={(id) => {
+                  const t = templates.find((t) => t.id === id);
+                  if (t) setTemplate(t.content);
+                }}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a template…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templates.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <Textarea
               placeholder={"Hello {name}, we have a {word1} just for you! 🎉"}
               rows={5}

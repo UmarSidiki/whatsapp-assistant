@@ -5,6 +5,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface ScheduledMessage {
   id: string;
@@ -12,6 +19,12 @@ interface ScheduledMessage {
   message: string;
   scheduledAt: string;
   status: "pending" | "sent" | "failed";
+}
+
+interface Template {
+  id: string;
+  name: string;
+  content: string;
 }
 
 const STATUS_VARIANTS: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -42,6 +55,7 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
   const [messages, setMessages] = useState<ScheduledMessage[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [templates, setTemplates] = useState<Template[]>([]);
 
   const load = async () => {
     const res = await fetch(`${apiUrl}/api/whatsapp/schedule`, { credentials: "include" });
@@ -51,6 +65,11 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
 
   useEffect(() => {
     load();
+    // Load saved templates
+    fetch(`${apiUrl}/api/whatsapp/templates`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => { if (data?.templates) setTemplates(data.templates); })
+      .catch(() => {});
     const interval = setInterval(load, 10_000);
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,6 +128,23 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
           </div>
           <div className="space-y-2">
             <Label htmlFor="s-msg">Message</Label>
+            {templates.length > 0 && (
+              <Select onValueChange={(id) => {
+                const t = templates.find((t) => t.id === id);
+                if (t) setMessage(t.content);
+              }}>
+                <SelectTrigger className="mb-2">
+                  <SelectValue placeholder="Load from template…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {templates.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Textarea id="s-msg" placeholder="Type your message…" rows={4} value={message} onChange={e => setMessage(e.target.value)} />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}

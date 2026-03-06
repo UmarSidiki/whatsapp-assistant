@@ -40,7 +40,7 @@ export interface AIProvider {
 
 /**
  * Groq API Provider
- * Supports multiple API keys with round-robin rotation and configurable models
+ * Supports multiple API keys with round-robin rotation, configurable models, and JSON mode
  */
 export class GroqProvider implements AIProvider {
   name = "groq";
@@ -50,8 +50,9 @@ export class GroqProvider implements AIProvider {
   private readonly RATE_LIMIT_WINDOW = 60000; // 1 minute
   private readonly RATE_LIMIT_THRESHOLD = 30; // ~30 requests per minute
   private model: string = "mixtral-8x7b-32768";
+  private jsonMode: boolean = false;
 
-  constructor(apiKeys: string[], model?: string) {
+  constructor(apiKeys: string[], model?: string, jsonMode: boolean = false) {
     if (!apiKeys || apiKeys.length === 0) {
       throw new ProviderError("At least one API key is required for GroqProvider", 400);
     }
@@ -59,6 +60,7 @@ export class GroqProvider implements AIProvider {
     if (model) {
       this.model = model;
     }
+    this.jsonMode = jsonMode;
   }
 
   /**
@@ -95,7 +97,7 @@ export class GroqProvider implements AIProvider {
 
       const fullPrompt = context ? `Context: ${context}\n\nPrompt: ${prompt}` : prompt;
 
-      const message = await client.chat.completions.create({
+      const requestBody: Record<string, any> = {
         model: this.model,
         max_tokens: 2048,
         temperature: 0.7,
@@ -105,7 +107,13 @@ export class GroqProvider implements AIProvider {
             content: fullPrompt,
           },
         ],
-      });
+      };
+
+      if (this.jsonMode) {
+        requestBody.response_format = { type: "json_object" };
+      }
+
+      const message = await client.chat.completions.create(requestBody);
 
       // Extract text from OpenAI-compatible response
       const response = message.choices[0]?.message?.content ?? "";
@@ -174,12 +182,16 @@ export class GeminiProvider implements AIProvider {
   private requestTimestamps: number[] = [];
   private readonly RATE_LIMIT_WINDOW = 60000; // 1 minute
   private readonly RATE_LIMIT_THRESHOLD = 60; // ~60 requests per minute
+  private model: string = "gemini-2.0-flash";
 
-  constructor(apiKeys: string[]) {
+  constructor(apiKeys: string[], model?: string) {
     if (!apiKeys || apiKeys.length === 0) {
       throw new ProviderError("At least one API key is required for GeminiProvider", 400);
     }
     this.apiKeys = apiKeys;
+    if (model) {
+      this.model = model;
+    }
   }
 
   /**
@@ -204,7 +216,7 @@ export class GeminiProvider implements AIProvider {
       }
 
       const client = new GoogleGenerativeAI(this.apiKeys[this.currentKeyIndex]);
-      const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const model = client.getGenerativeModel({ model: this.model });
 
       const fullPrompt = context ? `Context: ${context}\n\nPrompt: ${prompt}` : prompt;
 
@@ -286,7 +298,8 @@ export class GeminiProvider implements AIProvider {
 export function createProvider(
   name: "groq" | "gemini",
   apiKeys: string[],
-  model?: string
+  model?: string,
+  jsonMode: boolean = false
 ): AIProvider {
   if (!apiKeys || apiKeys.length === 0) {
     throw new ProviderError("API keys are required to create a provider", 400);
@@ -294,12 +307,10 @@ export function createProvider(
 
   switch (name) {
     case "groq":
-      return new GroqProvider(apiKeys, model);
+      return new GroqProvider(apiKeys, model, jsonMode);
     case "gemini":
-      return new GeminiProvider(apiKeys);
+      return new GeminiProvider(apiKeys, model);
     default:
       throw new ProviderError(`Unknown provider: ${name}`, 400);
   }
 }
-
-

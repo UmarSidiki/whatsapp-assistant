@@ -156,6 +156,7 @@ export const aiSettings = sqliteTable("ai_settings", {
   fallbackProvider: text("fallbackProvider", { enum: ["groq", "gemini"] }),
   groqModel: text("groqModel").notNull().default("llama-3.1-8b-instant"),
   fallbackGroqModel: text("fallbackGroqModel"),
+  geminiModel: text("geminiModel").notNull().default("gemini-2.0-flash"),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
 });

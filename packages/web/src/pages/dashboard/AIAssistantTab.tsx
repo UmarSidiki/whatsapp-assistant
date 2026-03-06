@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { AlertCircle, CheckCircle2, Clock, RotateCcw, Eye, EyeOff, Zap } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, RotateCcw, Eye, EyeOff, Zap, Plus, Trash2 } from "lucide-react";
 
 type Provider = "groq" | "gemini";
 type ContactStatus = "ready" | "mimicking" | "error";
@@ -22,9 +22,10 @@ interface AISettings {
   fallbackProvider: Provider;
   groqModel?: string;
   fallbackGroqModel?: string;
+  geminiModel?: string;
 }
 
-interface GroqApiKey {
+interface ApiKey {
   id: string;
   name?: string;
   keyValue: string;
@@ -56,6 +57,8 @@ interface APITestResult {
   message: string;
 }
 
+const CUSTOM_MODEL_VALUE = "__custom__";
+
 // Comprehensive list of Groq models
 const GROQ_MODELS = [
   { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B (Fastest)" },
@@ -75,6 +78,17 @@ const GROQ_MODELS = [
   { id: "qwen/qwen3-32b", name: "Qwen3 32B" },
   { id: "allam-2-7b", name: "Allam 2 7B" },
   { id: "canopylabs/orpheus-v1-english", name: "Orpheus V1 English" },
+];
+
+// Gemini models
+const GEMINI_MODELS = [
+  { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash (Default)" },
+  { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash Lite" },
+  { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro" },
+  { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
+  { id: "gemini-1.5-flash-8b", name: "Gemini 1.5 Flash 8B" },
+  { id: "gemini-2.5-flash-preview-05-20", name: "Gemini 2.5 Flash Preview" },
+  { id: "gemini-2.5-pro-preview-06-05", name: "Gemini 2.5 Pro Preview" },
 ];
 
 /**
@@ -112,13 +126,29 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [historyData, setHistoryData] = useState<Array<{ sender: string; timestamp: string; content: string }>>([]);
 
-  // API Key management state
-  const [groqApiKeys, setGroqApiKeys] = useState<GroqApiKey[]>([]);
-  const [newApiKey, setNewApiKey] = useState("");
-  const [newApiKeyName, setNewApiKeyName] = useState("");
-  const [showAddApiKey, setShowAddApiKey] = useState(false);
-  const [apiKeyError, setApiKeyError] = useState("");
-  const [apiKeySaving, setApiKeySaving] = useState(false);
+  // API Key management state - Groq
+  const [groqApiKeys, setGroqApiKeys] = useState<ApiKey[]>([]);
+  const [newGroqKey, setNewGroqKey] = useState("");
+  const [newGroqKeyName, setNewGroqKeyName] = useState("");
+  const [showAddGroqKey, setShowAddGroqKey] = useState(false);
+  const [groqKeyError, setGroqKeyError] = useState("");
+  const [groqKeySaving, setGroqKeySaving] = useState(false);
+
+  // API Key management state - Gemini
+  const [geminiApiKeys, setGeminiApiKeys] = useState<ApiKey[]>([]);
+  const [newGeminiKey, setNewGeminiKey] = useState("");
+  const [newGeminiKeyName, setNewGeminiKeyName] = useState("");
+  const [showAddGeminiKey, setShowAddGeminiKey] = useState(false);
+  const [geminiKeyError, setGeminiKeyError] = useState("");
+  const [geminiKeySaving, setGeminiKeySaving] = useState(false);
+
+  // Custom model inputs
+  const [customGroqModel, setCustomGroqModel] = useState("");
+  const [customFallbackGroqModel, setCustomFallbackGroqModel] = useState("");
+  const [customGeminiModel, setCustomGeminiModel] = useState("");
+  const [useCustomGroqModel, setUseCustomGroqModel] = useState(false);
+  const [useCustomFallbackGroqModel, setUseCustomFallbackGroqModel] = useState(false);
+  const [useCustomGeminiModel, setUseCustomGeminiModel] = useState(false);
 
   // Load initial data
   useEffect(() => {
@@ -126,8 +156,8 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     void loadContacts();
     void loadUsageStats();
     void loadGroqApiKeys();
+    void loadGeminiApiKeys();
 
-    // Auto-refresh stats every 30 seconds
     const interval = setInterval(() => {
       void loadUsageStats();
     }, 30000);
@@ -142,13 +172,26 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
       });
       if (res.ok) {
         const data = await res.json();
-        // Backend returns aiEnabled; map to state field enabled
+        const groqModel = data.groqModel || "llama-3.1-8b-instant";
+        const fallbackGroqModel = data.fallbackGroqModel || "llama-3.1-70b-versatile";
+        const geminiModel = data.geminiModel || "gemini-2.0-flash";
+
+        // Detect custom models (not in predefined lists)
+        const isCustomGroq = !GROQ_MODELS.some((m) => m.id === groqModel);
+        const isCustomFallbackGroq = !GROQ_MODELS.some((m) => m.id === fallbackGroqModel);
+        const isCustomGemini = !GEMINI_MODELS.some((m) => m.id === geminiModel);
+
+        if (isCustomGroq) { setUseCustomGroqModel(true); setCustomGroqModel(groqModel); }
+        if (isCustomFallbackGroq) { setUseCustomFallbackGroqModel(true); setCustomFallbackGroqModel(fallbackGroqModel); }
+        if (isCustomGemini) { setUseCustomGeminiModel(true); setCustomGeminiModel(geminiModel); }
+
         setSettings({
           enabled: data.aiEnabled ?? false,
           primaryProvider: data.primaryProvider ?? "groq",
           fallbackProvider: data.fallbackProvider ?? "gemini",
-          groqModel: data.groqModel,
-          fallbackGroqModel: data.fallbackGroqModel,
+          groqModel,
+          fallbackGroqModel,
+          geminiModel,
         });
         setSettingsError("");
       }
@@ -181,7 +224,21 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
         setGroqApiKeys(Array.isArray(data.keys) ? data.keys : []);
       }
     } catch (err) {
-      console.error("Failed to load API keys:", err);
+      console.error("Failed to load Groq API keys:", err);
+    }
+  };
+
+  const loadGeminiApiKeys = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/ai/api-keys/gemini`, {
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGeminiApiKeys(Array.isArray(data.keys) ? data.keys : []);
+      }
+    } catch (err) {
+      console.error("Failed to load Gemini API keys:", err);
     }
   };
 
@@ -214,11 +271,10 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
         aiEnabled: settings.enabled,
         primaryProvider: settings.primaryProvider,
         fallbackProvider: settings.fallbackProvider,
-        groqModel: settings.groqModel,
-        fallbackGroqModel: settings.fallbackGroqModel,
+        groqModel: useCustomGroqModel ? customGroqModel : settings.groqModel,
+        fallbackGroqModel: useCustomFallbackGroqModel ? customFallbackGroqModel : settings.fallbackGroqModel,
+        geminiModel: useCustomGeminiModel ? customGeminiModel : settings.geminiModel,
       };
-
-      console.log("Saving settings:", payload);
 
       const res = await fetch(`${apiUrl}/api/ai/settings`, {
         method: "POST",
@@ -228,7 +284,6 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
       });
 
       const data = await res.json();
-      console.log("Save response:", data);
 
       if (res.ok) {
         setSettingsSuccess("Settings saved successfully");
@@ -277,60 +332,75 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     }
   };
 
-  const handleAddApiKey = async () => {
-    if (!newApiKey.trim()) {
-      setApiKeyError("API key cannot be empty");
+  const handleAddApiKey = async (provider: Provider) => {
+    const key = provider === "groq" ? newGroqKey : newGeminiKey;
+    const name = provider === "groq" ? newGroqKeyName : newGeminiKeyName;
+    const setError = provider === "groq" ? setGroqKeyError : setGeminiKeyError;
+    const setSaving = provider === "groq" ? setGroqKeySaving : setGeminiKeySaving;
+
+    if (!key.trim()) {
+      setError("API key cannot be empty");
       return;
     }
 
-    setApiKeySaving(true);
-    setApiKeyError("");
+    setSaving(true);
+    setError("");
 
     try {
-      const res = await fetch(`${apiUrl}/api/ai/api-keys/groq`, {
+      const res = await fetch(`${apiUrl}/api/ai/api-keys/${provider}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          keyValue: newApiKey,
-          name: newApiKeyName || undefined,
-        }),
+        body: JSON.stringify({ keyValue: key, name: name || undefined }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        setGroqApiKeys([...groqApiKeys, data.key]);
-        setNewApiKey("");
-        setNewApiKeyName("");
-        setShowAddApiKey(false);
+        if (provider === "groq") {
+          setGroqApiKeys([...groqApiKeys, data.key]);
+          setNewGroqKey("");
+          setNewGroqKeyName("");
+          setShowAddGroqKey(false);
+        } else {
+          setGeminiApiKeys([...geminiApiKeys, data.key]);
+          setNewGeminiKey("");
+          setNewGeminiKeyName("");
+          setShowAddGeminiKey(false);
+        }
       } else {
         const data = await res.json();
-        setApiKeyError(data.message || "Failed to add API key");
+        setError(data.message || "Failed to add API key");
       }
     } catch (err) {
-      setApiKeyError("Error adding API key. Please try again.");
+      setError("Error adding API key. Please try again.");
       console.error(err);
     } finally {
-      setApiKeySaving(false);
+      setSaving(false);
     }
   };
 
-  const handleRemoveApiKey = async (keyId: string) => {
+  const handleRemoveApiKey = async (provider: Provider, keyId: string) => {
     if (!confirm("Are you sure you want to remove this API key?")) return;
 
+    const setError = provider === "groq" ? setGroqKeyError : setGeminiKeyError;
+
     try {
-      const res = await fetch(`${apiUrl}/api/ai/api-keys/groq/${keyId}`, {
+      const res = await fetch(`${apiUrl}/api/ai/api-keys/${provider}/${keyId}`, {
         method: "DELETE",
         credentials: "include",
       });
 
       if (res.ok) {
-        setGroqApiKeys(groqApiKeys.filter((k) => k.id !== keyId));
+        if (provider === "groq") {
+          setGroqApiKeys(groqApiKeys.filter((k) => k.id !== keyId));
+        } else {
+          setGeminiApiKeys(geminiApiKeys.filter((k) => k.id !== keyId));
+        }
       } else {
-        setApiKeyError("Failed to remove API key");
+        setError("Failed to remove API key");
       }
     } catch (err) {
-      setApiKeyError("Error removing API key. Please try again.");
+      setError("Error removing API key. Please try again.");
       console.error(err);
     }
   };
@@ -507,10 +577,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
             <Select
               value={settings.primaryProvider}
               onValueChange={(value) =>
-                setSettings({
-                  ...settings,
-                  primaryProvider: value as Provider,
-                })
+                setSettings({ ...settings, primaryProvider: value as Provider })
               }
             >
               <SelectTrigger>
@@ -532,10 +599,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
             <Select
               value={settings.fallbackProvider}
               onValueChange={(value) =>
-                setSettings({
-                  ...settings,
-                  fallbackProvider: value as Provider,
-                })
+                setSettings({ ...settings, fallbackProvider: value as Provider })
               }
             >
               <SelectTrigger>
@@ -554,57 +618,151 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
           {/* Groq Model Selection */}
           <div className="space-y-2">
             <label className="text-sm font-medium">Primary Groq Model</label>
-            <Select
-              value={settings.groqModel || "llama-3.1-8b-instant"}
-              onValueChange={(value) =>
-                setSettings({
-                  ...settings,
-                  groqModel: value,
-                })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {GROQ_MODELS.map((model) => (
-                  <SelectItem key={model.id} value={model.id}>
-                    {model.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Primary model for Groq API calls
-            </p>
+            {useCustomGroqModel ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Enter custom model ID"
+                  value={customGroqModel}
+                  onChange={(e) => {
+                    setCustomGroqModel(e.target.value);
+                    setSettings({ ...settings, groqModel: e.target.value });
+                  }}
+                  className="flex-1 rounded border px-2 py-2 text-sm"
+                />
+                <Button variant="outline" size="sm" onClick={() => {
+                  setUseCustomGroqModel(false);
+                  setSettings({ ...settings, groqModel: "llama-3.1-8b-instant" });
+                }}>
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Select
+                value={settings.groqModel || "llama-3.1-8b-instant"}
+                onValueChange={(value) => {
+                  if (value === CUSTOM_MODEL_VALUE) {
+                    setUseCustomGroqModel(true);
+                    setCustomGroqModel("");
+                  } else {
+                    setSettings({ ...settings, groqModel: value });
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {GROQ_MODELS.map((model) => (
+                    <SelectItem key={model.id} value={model.id}>
+                      {model.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={CUSTOM_MODEL_VALUE}>✏️ Custom Model...</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            <p className="text-xs text-muted-foreground">Primary model for Groq API calls</p>
           </div>
 
           {/* Fallback Groq Model Selection */}
           <div className="space-y-2">
             <label className="text-sm font-medium">Fallback Groq Model</label>
-            <Select
-              value={settings.fallbackGroqModel || "llama-3.1-70b-versatile"}
-              onValueChange={(value) =>
-                setSettings({
-                  ...settings,
-                  fallbackGroqModel: value,
-                })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {GROQ_MODELS.map((model) => (
-                  <SelectItem key={model.id} value={model.id}>
-                    {model.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Fallback model when primary is unavailable
-            </p>
+            {useCustomFallbackGroqModel ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Enter custom model ID"
+                  value={customFallbackGroqModel}
+                  onChange={(e) => {
+                    setCustomFallbackGroqModel(e.target.value);
+                    setSettings({ ...settings, fallbackGroqModel: e.target.value });
+                  }}
+                  className="flex-1 rounded border px-2 py-2 text-sm"
+                />
+                <Button variant="outline" size="sm" onClick={() => {
+                  setUseCustomFallbackGroqModel(false);
+                  setSettings({ ...settings, fallbackGroqModel: "llama-3.1-70b-versatile" });
+                }}>
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Select
+                value={settings.fallbackGroqModel || "llama-3.1-70b-versatile"}
+                onValueChange={(value) => {
+                  if (value === CUSTOM_MODEL_VALUE) {
+                    setUseCustomFallbackGroqModel(true);
+                    setCustomFallbackGroqModel("");
+                  } else {
+                    setSettings({ ...settings, fallbackGroqModel: value });
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {GROQ_MODELS.map((model) => (
+                    <SelectItem key={model.id} value={model.id}>
+                      {model.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={CUSTOM_MODEL_VALUE}>✏️ Custom Model...</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            <p className="text-xs text-muted-foreground">Fallback model when primary is unavailable</p>
+          </div>
+
+          {/* Gemini Model Selection */}
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-sm font-medium">Gemini Model</label>
+            {useCustomGeminiModel ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Enter custom Gemini model ID"
+                  value={customGeminiModel}
+                  onChange={(e) => {
+                    setCustomGeminiModel(e.target.value);
+                    setSettings({ ...settings, geminiModel: e.target.value });
+                  }}
+                  className="flex-1 rounded border px-2 py-2 text-sm"
+                />
+                <Button variant="outline" size="sm" onClick={() => {
+                  setUseCustomGeminiModel(false);
+                  setSettings({ ...settings, geminiModel: "gemini-2.0-flash" });
+                }}>
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Select
+                value={settings.geminiModel || "gemini-2.0-flash"}
+                onValueChange={(value) => {
+                  if (value === CUSTOM_MODEL_VALUE) {
+                    setUseCustomGeminiModel(true);
+                    setCustomGeminiModel("");
+                  } else {
+                    setSettings({ ...settings, geminiModel: value });
+                  }
+                }}
+              >
+                <SelectTrigger className="md:w-1/2">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {GEMINI_MODELS.map((model) => (
+                    <SelectItem key={model.id} value={model.id}>
+                      {model.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={CUSTOM_MODEL_VALUE}>✏️ Custom Model...</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            <p className="text-xs text-muted-foreground">Model for Gemini API calls</p>
           </div>
 
           {/* Groq API Key Management */}
@@ -612,44 +770,46 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium">Groq API Keys</label>
               <Button
-                onClick={() => setShowAddApiKey(!showAddApiKey)}
+                onClick={() => setShowAddGroqKey(!showAddGroqKey)}
                 variant="outline"
                 size="sm"
+                className="gap-1"
               >
-                {showAddApiKey ? "Cancel" : "Add Key"}
+                <Plus className="h-3 w-3" />
+                {showAddGroqKey ? "Cancel" : "Add Key"}
               </Button>
             </div>
 
-            {apiKeyError && (
+            {groqKeyError && (
               <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
                 <AlertCircle className="h-4 w-4" />
-                {apiKeyError}
+                {groqKeyError}
               </div>
             )}
 
-            {showAddApiKey && (
+            {showAddGroqKey && (
               <div className="space-y-2 rounded-lg border border-dashed p-3">
                 <input
                   type="text"
-                  placeholder="API Key"
-                  value={newApiKey}
-                  onChange={(e) => setNewApiKey(e.target.value)}
+                  placeholder="gsk_..."
+                  value={newGroqKey}
+                  onChange={(e) => setNewGroqKey(e.target.value)}
                   className="w-full rounded border px-2 py-2 text-sm"
                 />
                 <input
                   type="text"
                   placeholder="Key name (optional)"
-                  value={newApiKeyName}
-                  onChange={(e) => setNewApiKeyName(e.target.value)}
+                  value={newGroqKeyName}
+                  onChange={(e) => setNewGroqKeyName(e.target.value)}
                   className="w-full rounded border px-2 py-2 text-sm"
                 />
                 <Button
-                  onClick={handleAddApiKey}
-                  disabled={apiKeySaving || !newApiKey.trim()}
+                  onClick={() => handleAddApiKey("groq")}
+                  disabled={groqKeySaving || !newGroqKey.trim()}
                   size="sm"
                   className="w-full"
                 >
-                  {apiKeySaving ? "Adding..." : "Add API Key"}
+                  {groqKeySaving ? "Adding..." : "Add Groq API Key"}
                 </Button>
               </div>
             )}
@@ -668,11 +828,12 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                       </p>
                     </div>
                     <Button
-                      onClick={() => handleRemoveApiKey(key.id)}
+                      onClick={() => handleRemoveApiKey("groq", key.id)}
                       variant="ghost"
                       size="sm"
-                      className="text-red-600"
+                      className="text-red-600 gap-1"
                     >
+                      <Trash2 className="h-3 w-3" />
                       Remove
                     </Button>
                   </div>
@@ -680,7 +841,88 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                No API keys added yet. Add one to use Groq API.
+                No Groq API keys added yet. Add one to use Groq API.
+              </p>
+            )}
+          </div>
+
+          {/* Gemini API Key Management */}
+          <div className="space-y-2 md:col-span-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium">Gemini API Keys</label>
+              <Button
+                onClick={() => setShowAddGeminiKey(!showAddGeminiKey)}
+                variant="outline"
+                size="sm"
+                className="gap-1"
+              >
+                <Plus className="h-3 w-3" />
+                {showAddGeminiKey ? "Cancel" : "Add Key"}
+              </Button>
+            </div>
+
+            {geminiKeyError && (
+              <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                <AlertCircle className="h-4 w-4" />
+                {geminiKeyError}
+              </div>
+            )}
+
+            {showAddGeminiKey && (
+              <div className="space-y-2 rounded-lg border border-dashed p-3">
+                <input
+                  type="text"
+                  placeholder="AIza..."
+                  value={newGeminiKey}
+                  onChange={(e) => setNewGeminiKey(e.target.value)}
+                  className="w-full rounded border px-2 py-2 text-sm"
+                />
+                <input
+                  type="text"
+                  placeholder="Key name (optional)"
+                  value={newGeminiKeyName}
+                  onChange={(e) => setNewGeminiKeyName(e.target.value)}
+                  className="w-full rounded border px-2 py-2 text-sm"
+                />
+                <Button
+                  onClick={() => handleAddApiKey("gemini")}
+                  disabled={geminiKeySaving || !newGeminiKey.trim()}
+                  size="sm"
+                  className="w-full"
+                >
+                  {geminiKeySaving ? "Adding..." : "Add Gemini API Key"}
+                </Button>
+              </div>
+            )}
+
+            {geminiApiKeys.length > 0 ? (
+              <div className="space-y-2">
+                {geminiApiKeys.map((key) => (
+                  <div
+                    key={key.id}
+                    className="flex items-center justify-between rounded border p-2 text-sm"
+                  >
+                    <div className="flex-1">
+                      <p className="font-medium">{key.name || "Unnamed Key"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {maskApiKey(key.keyValue)}
+                      </p>
+                    </div>
+                    <Button
+                      onClick={() => handleRemoveApiKey("gemini", key.id)}
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-600 gap-1"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No Gemini API keys added yet. Add one to use Google Gemini.
               </p>
             )}
           </div>

@@ -21,6 +21,7 @@ export interface Persona {
   commonPhrases: string[]; // top 5 phrases the person uses
   greetingStyle: string; // 'formal', 'casual', 'friendly', 'none'
   responsePatterns: string; // description of how they respond
+  emotionalTone: string; // 'loving', 'caring', 'playful', 'neutral', 'professional', 'warm'
 }
 
 // ─── Default Persona ──────────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ const DEFAULT_PERSONA: Persona = {
   commonPhrases: [],
   greetingStyle: "none",
   responsePatterns: "Neutral communication style",
+  emotionalTone: "neutral",
 };
 
 // ─── Emoji Detection ──────────────────────────────────────────────────────────
@@ -310,10 +312,73 @@ function analyzeResponsePatterns(messages: string[]): string {
   return patterns.join(", ") + ".";
 }
 
+// ─── Emotional Tone Detection ─────────────────────────────────────────────────
+
+/**
+ * Detect the emotional tone of the user's relationship with a contact
+ * by analyzing both the user's and contact's messages
+ */
+function detectEmotionalTone(userMessages: string[], contactMessages: string[]): string {
+  if (userMessages.length === 0) return "neutral";
+
+  const all = userMessages.join(" ").toLowerCase();
+
+  // Score each emotional category
+  const scores: Record<string, number> = {
+    loving: 0,
+    caring: 0,
+    playful: 0,
+    warm: 0,
+    professional: 0,
+    neutral: 0,
+  };
+
+  // Loving indicators
+  const lovingWords = /\b(love|miss you|baby|babe|jaan|jaanu|sweetheart|darling|my love|i love|❤️|💕|💖|💗|😘|😍|🥰|💋)\b/gi;
+  scores.loving += (all.match(lovingWords) || []).length * 2;
+
+  // Caring indicators
+  const caringWords = /\b(take care|how are you|feeling better|eat|sleep well|be safe|worried|hope you|praying|thinking of you|miss|care about)\b/gi;
+  scores.caring += (all.match(caringWords) || []).length * 1.5;
+
+  // Playful indicators
+  const playfulWords = /\b(lol|haha|😂|🤣|😜|😝|rofl|lmao|funny|joke|hehe|teasing|😏|🤪|silly)\b/gi;
+  scores.playful += (all.match(playfulWords) || []).length * 1.5;
+
+  // Warm/friendly indicators
+  const warmWords = /\b(thanks|thank you|appreciate|great|amazing|awesome|wonderful|happy|glad|excited|🙏|😊|🤗|proud)\b/gi;
+  scores.warm += (all.match(warmWords) || []).length;
+
+  // Professional indicators
+  const professionalWords = /\b(regards|sir|ma'am|please find|attached|meeting|schedule|deadline|deliverable|update|noted|acknowledged)\b/gi;
+  scores.professional += (all.match(professionalWords) || []).length * 2;
+
+  // Emoji density boost (high emoji usage suggests emotional warmth)
+  const emojiCount = extractEmojis(all).length;
+  if (emojiCount > userMessages.length * 0.3) {
+    scores.warm += 2;
+    scores.loving += 1;
+  }
+
+  // Find highest scoring emotion
+  let maxScore = 0;
+  let dominant = "neutral";
+  for (const [emotion, score] of Object.entries(scores)) {
+    if (score > maxScore) {
+      maxScore = score;
+      dominant = emotion;
+    }
+  }
+
+  return maxScore > 2 ? dominant : "neutral";
+}
+
 // ─── Main Functions ───────────────────────────────────────────────────────────
 
 /**
- * Extract persona from message history
+ * Extract persona from message history.
+ * Analyzes the USER's own messages to a specific contact
+ * to understand how the user communicates with them.
  */
 export async function extractPersona(
   userId: string,
@@ -321,84 +386,76 @@ export async function extractPersona(
   limit: number = 100
 ): Promise<Persona> {
   try {
-    logger.info("Extracting persona", { userId, contactPhone, limit });
+    logger.info("Extracting user persona for contact", { userId, contactPhone, limit });
 
-    // Get message history for the contact
     const history = await getMessageHistory(userId, contactPhone, limit);
 
     if (history.length === 0) {
-      logger.warn("No message history found for persona extraction", {
-        userId,
-        contactPhone,
-      });
+      logger.warn("No message history found for persona extraction", { userId, contactPhone });
       return DEFAULT_PERSONA;
     }
 
-    // Filter to only messages from the contact
+    // Analyze the USER's own messages to this contact (not the contact's messages)
+    const userMessages = history
+      .filter((h) => h.sender === "me")
+      .map((h) => h.message);
+
+    if (userMessages.length < 3) {
+      logger.warn("Not enough user messages for persona extraction", { userId, contactPhone, count: userMessages.length });
+      return DEFAULT_PERSONA;
+    }
+
+    // Also get contact's messages for relationship context
     const contactMessages = history
       .filter((h) => h.sender === "contact")
       .map((h) => h.message);
 
-    if (contactMessages.length === 0) {
-      logger.warn("No contact messages found in history", {
-        userId,
-        contactPhone,
-      });
-      return DEFAULT_PERSONA;
-    }
-
-    // Extract emojis
+    // Extract emoji usage from user's messages
     const allEmojis: string[] = [];
-    for (const msg of contactMessages) {
+    for (const msg of userMessages) {
       allEmojis.push(...extractEmojis(msg));
     }
-
     const emojiFreq = countFrequency(allEmojis);
     const topEmojis = getTopN(emojiFreq, 5);
-    const totalMessages = contactMessages.length;
     const emojiFrequency: "low" | "medium" | "high" =
-      allEmojis.length > totalMessages * 0.5
+      allEmojis.length > userMessages.length * 0.5
         ? "high"
-        : allEmojis.length > totalMessages * 0.1
+        : allEmojis.length > userMessages.length * 0.1
           ? "medium"
           : "low";
 
-    // Detect tone
-    const tone = detectTone(contactMessages);
+    // Detect user's tone toward this contact
+    const tone = detectTone(userMessages);
 
-    // Analyze message format
-    const messageFormat = analyzeMessageFormat(contactMessages);
+    // Analyze user's message format
+    const messageFormat = analyzeMessageFormat(userMessages);
 
-    // Extract common phrases
-    const commonPhrases = extractCommonPhrases(contactMessages);
+    // Extract user's common phrases
+    const commonPhrases = extractCommonPhrases(userMessages);
 
-    // Detect greeting style
-    const greetingStyle = detectGreetingStyle(contactMessages);
+    // Detect user's greeting style
+    const greetingStyle = detectGreetingStyle(userMessages);
 
-    // Analyze response patterns
-    const responsePatterns = analyzeResponsePatterns(contactMessages);
+    // Analyze user's response patterns
+    const responsePatterns = analyzeResponsePatterns(userMessages);
+
+    // Detect emotional relationship with contact
+    const emotionalTone = detectEmotionalTone(userMessages, contactMessages);
 
     const persona: Persona = {
       tone,
-      emojiUsage: {
-        frequency: emojiFrequency,
-        topEmojis,
-      },
+      emojiUsage: { frequency: emojiFrequency, topEmojis },
       messageFormat,
       commonPhrases,
       greetingStyle,
       responsePatterns,
+      emotionalTone,
     };
 
-    logger.debug("Persona extracted successfully", { userId, contactPhone, persona });
-
+    logger.debug("User persona extracted", { userId, contactPhone, emotionalTone: persona.emotionalTone });
     return persona;
   } catch (e) {
-    logger.error("Error extracting persona", {
-      error: String(e),
-      userId,
-      contactPhone,
-    });
+    logger.error("Error extracting persona", { error: String(e), userId, contactPhone });
     return DEFAULT_PERSONA;
   }
 }
@@ -546,35 +603,45 @@ export async function refreshPersona(
 }
 
 /**
- * Generate system prompt for AI using persona
+ * Generate system prompt for AI using the user's persona toward a contact.
+ * The AI should reply AS the user, matching how they naturally talk to this person.
  */
 export function generatePersonaPrompt(persona: Persona): string {
   const parts: string[] = [];
 
-  parts.push(`You are mimicking the messaging style of a contact with the following characteristics:`);
+  parts.push(`You are a WhatsApp AI assistant replying on behalf of a real person. Your job is to write messages exactly the way this person naturally writes to this contact.`);
   parts.push("");
-  parts.push(`**Tone**: ${persona.tone}`);
+  parts.push(`Here is how this person communicates with this contact:`);
+  parts.push("");
+  parts.push(`**Communication Tone**: ${persona.tone}`);
+  parts.push(`**Emotional Relationship**: ${persona.emotionalTone}`);
+
+  if (persona.emotionalTone === "loving") {
+    parts.push(`- This person is loving and affectionate with this contact. Use warm, intimate language. Include endearments naturally.`);
+  } else if (persona.emotionalTone === "caring") {
+    parts.push(`- This person is caring and attentive toward this contact. Show concern, ask about wellbeing, be supportive.`);
+  } else if (persona.emotionalTone === "playful") {
+    parts.push(`- This person is playful and humorous with this contact. Use light jokes, teasing, and fun energy.`);
+  } else if (persona.emotionalTone === "warm") {
+    parts.push(`- This person is warm and friendly with this contact. Be appreciative, positive, and encouraging.`);
+  } else if (persona.emotionalTone === "professional") {
+    parts.push(`- This person keeps a professional tone with this contact. Stay formal, concise, and task-oriented.`);
+  }
 
   if (persona.emojiUsage.frequency !== "low" && persona.emojiUsage.topEmojis.length > 0) {
     parts.push(
-      `**Emoji Usage**: ${persona.emojiUsage.frequency} frequency. Commonly used emojis: ${persona.emojiUsage.topEmojis.join(", ")}`
+      `**Emoji Usage**: ${persona.emojiUsage.frequency} frequency. Favorite emojis: ${persona.emojiUsage.topEmojis.join(" ")}`
     );
+  } else {
+    parts.push(`**Emoji Usage**: Rarely uses emojis`);
   }
 
   parts.push(
-    `**Message Format**: Typically ${persona.messageFormat.preferredStructure} messages (avg ${persona.messageFormat.avgLength} characters)`
+    `**Message Length**: ${persona.messageFormat.preferredStructure} messages (avg ${persona.messageFormat.avgLength} chars)`
   );
 
-  if (persona.messageFormat.usesPunctuation) {
-    parts.push(`- Uses punctuation marks regularly`);
-  }
-
-  if (persona.messageFormat.usesCapitalization) {
-    parts.push(`- Uses capitalization for emphasis`);
-  }
-
   if (persona.commonPhrases.length > 0) {
-    parts.push(`**Common Phrases**: ${persona.commonPhrases.join(", ")}`);
+    parts.push(`**Signature Phrases**: "${persona.commonPhrases.join('", "')}"`);
   }
 
   if (persona.greetingStyle !== "none") {
@@ -583,7 +650,14 @@ export function generatePersonaPrompt(persona: Persona): string {
 
   parts.push(`**Communication Pattern**: ${persona.responsePatterns}`);
   parts.push("");
-  parts.push(`Use these patterns to match their style naturally in your responses.`);
+  parts.push(`IMPORTANT RULES:`);
+  parts.push(`- Write EXACTLY like this person — same length, same style, same emotions`);
+  parts.push(`- Match their emoji frequency and favorites`);
+  parts.push(`- Use their common phrases and greetings naturally`);
+  parts.push(`- Be genuinely human — show real emotions, not robotic responses`);
+  parts.push(`- Keep the same emotional warmth/distance they maintain with this contact`);
+  parts.push(`- Do NOT add disclaimers, headers, or explanations — just the raw message text`);
+  parts.push(`- If they write short casual texts, you write short casual texts`);
 
   return parts.join("\n");
 }

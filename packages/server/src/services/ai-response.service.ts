@@ -227,7 +227,7 @@ export function splitIntoMultipleMessages(response: string): string[] {
 // ─── Private Functions ────────────────────────────────────────────────────────
 
 /**
- * Generate response in mimic mode (mimic contact's messaging style)
+ * Generate response in mimic mode (reply as the user, matching their style)
  */
 async function generateMimicResponse(
   userId: string,
@@ -254,25 +254,50 @@ async function generateMimicResponse(
       })
       .join("\n");
 
-    // Build full prompt
+    // Build full prompt — ask for JSON output when using Groq
     const fullPrompt = `${systemPrompt}
 
 Conversation History:
 ${historyText}
 
-Latest message to respond to: "${message}"
+Latest message from contact: "${message}"
 
-Generate your response as if you are this contact, mimicking their messaging style. Keep it natural and conversational.`;
+Reply as this person would naturally reply to this contact. Be genuine, emotional, and human.
+
+You MUST respond in valid JSON format:
+{
+  "response": "your full reply text here",
+  "emotion": "the emotion behind this reply (e.g. happy, caring, playful, neutral, concerned)",
+  "segments": ["segment 1", "segment 2"]
+}
+
+The "segments" array should split your response into natural message chunks like a human would send on WhatsApp (short messages, not one long paragraph). If the reply is short (under 100 chars), just use one segment.
+Do NOT include any text outside the JSON object.`;
 
     // Select provider
     const { provider, isPrimary } = await selectProvider(userId);
     logger.debug("Selected provider for mimic mode", { userId, provider, isPrimary });
 
     // Generate response
-    const response = await callAIProvider(userId, provider, fullPrompt, isPrimary);
+    const raw = await callAIProvider(userId, provider, fullPrompt, isPrimary);
+
+    // Try to parse JSON response (Groq JSON mode), fall back to raw text
+    let response: string;
+    try {
+      const parsed = JSON.parse(raw);
+      // If we got segments, join them with \n\n so sendSegmented will split on them
+      if (parsed.segments && Array.isArray(parsed.segments) && parsed.segments.length > 1) {
+        response = parsed.segments.join("\n\n");
+      } else {
+        response = parsed.response || raw;
+      }
+    } catch {
+      // Not JSON — use raw response (happens with Gemini or non-JSON-mode models)
+      response = raw;
+    }
 
     // Track API call
-    const model = provider === "groq" ? (isPrimary ? "llama-3.1-8b-instant" : "llama-3.1-70b-versatile") : "gemini-1.5-flash";
+    const model = provider === "groq" ? (isPrimary ? "llama-3.1-8b-instant" : "llama-3.1-70b-versatile") : "gemini-2.0-flash";
     await trackApiCall(userId, provider, model);
 
     return { response, provider };
@@ -327,7 +352,7 @@ Your analysis/response:`;
     const response = await callAIProvider(userId, provider, fullPrompt, isPrimary);
 
     // Track API call
-    const model = provider === "groq" ? (isPrimary ? "llama-3.1-8b-instant" : "llama-3.1-70b-versatile") : "gemini-1.5-flash";
+    const model = provider === "groq" ? (isPrimary ? "llama-3.1-8b-instant" : "llama-3.1-70b-versatile") : "gemini-2.0-flash";
     await trackApiCall(userId, provider, model);
 
     return { response, provider };
@@ -398,24 +423,33 @@ async function callAIProvider(userId: string, provider: "groq" | "gemini", promp
 
     // Get user settings to retrieve the model
     let model: string | undefined;
-    if (provider === "groq") {
-      try {
-        const userSettings = await db
-          .select({ groqModel: aiSettings.groqModel, fallbackGroqModel: aiSettings.fallbackGroqModel })
-          .from(aiSettings)
-          .where(eq(aiSettings.userId, userId))
-          .limit(1);
+    let useJsonMode = false;
 
+    try {
+      const userSettings = await db
+        .select({
+          groqModel: aiSettings.groqModel,
+          fallbackGroqModel: aiSettings.fallbackGroqModel,
+          geminiModel: aiSettings.geminiModel,
+        })
+        .from(aiSettings)
+        .where(eq(aiSettings.userId, userId))
+        .limit(1);
+
+      if (provider === "groq") {
         model = !isPrimary && userSettings[0]?.fallbackGroqModel
           ? userSettings[0].fallbackGroqModel
           : (userSettings[0]?.groqModel || "llama-3.1-8b-instant");
-      } catch (error) {
-        logger.warn("Failed to fetch groqModel from settings, using default", { userId, error: String(error) });
-        model = "llama-3.1-8b-instant";
+        useJsonMode = true;
+      } else {
+        model = userSettings[0]?.geminiModel || "gemini-2.0-flash";
       }
+    } catch (error) {
+      logger.warn("Failed to fetch model from settings, using default", { userId, provider, error: String(error) });
+      model = provider === "groq" ? "llama-3.1-8b-instant" : "gemini-2.0-flash";
     }
 
-    const aiProvider = createProvider(provider, allKeys, model);
+    const aiProvider = createProvider(provider, allKeys, model, useJsonMode);
     const response = await aiProvider.generateResponse(prompt);
 
     logger.debug("AI provider call successful", { provider, model });

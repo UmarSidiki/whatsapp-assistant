@@ -1,0 +1,1 @@
+ALTER TABLE `ai_settings` ADD `geminiModel` text DEFAULT 'gemini-2.0-flash' NOT NULL;

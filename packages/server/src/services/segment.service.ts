@@ -148,7 +148,7 @@ export function bufferIncomingMessage(
   key: string,
   text: string,
   handler: (combinedText: string) => Promise<void>,
-  quietPeriodMs: number = 2000
+  quietPeriodMs: number = 6500
 ): void {
   const existing = incomingBuffers.get(key);
 
