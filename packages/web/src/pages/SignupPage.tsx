@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { GalleryVerticalEnd } from "lucide-react";
 import { SignupForm } from "@/components/signup-form";
 import { useSession } from "@/lib/auth-client";
+import { API_BASE_URL } from "@/config/api";
 
 export default function SignupPage() {
   const navigate = useNavigate();
@@ -20,7 +21,7 @@ export default function SignupPage() {
     setError(undefined);
     try {
       // Use direct fetch so we can send inviteCode through our server interceptor
-      const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+      const apiUrl = API_BASE_URL;
       const res = await fetch(`${apiUrl}/api/auth/sign-up/email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -20,5 +20,7 @@ export const auth = betterAuth({
   trustedOrigins: [
     "http://localhost:5173",
     "http://localhost:5174",
+    "https://assistant.itupdown.com",
+    ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : [])
   ],
 });

@@ -1,9 +1,8 @@
 import { useState, useEffect } from "react";
-
-const fallback = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+import { API_BASE_URL } from "@/config/api";
 
 export function useApiUrl(): string {
-  const [url, setUrl] = useState(fallback);
+  const [url, setUrl] = useState(API_BASE_URL);
 
   useEffect(() => {
     const credUrl = import.meta.env.VITE_API_CREDENTIALS_URL;
