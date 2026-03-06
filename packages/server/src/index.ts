@@ -42,10 +42,15 @@ app.all('/api/auth/*', (c) => auth.handler(c.req.raw))
 app.route('/api/whatsapp', whatsappRouter)
 app.route('/api/ai', aiRouter)
 
-app.get('/', (c) => {
+app.get('/api/health', (c) => {
   logger.info('Health check')
   return c.text('Hello Hono!')
 })
+
+// Serve static frontend files
+import { serveStatic } from 'hono/bun'
+app.use('/*', serveStatic({ root: '../web/dist' }))
+app.use('*', serveStatic({ path: '../web/dist/index.html' })) // SPA fallback
 
 const port = process.env.PORT || 3000
 export default {
