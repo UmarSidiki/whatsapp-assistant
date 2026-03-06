@@ -113,7 +113,7 @@ export class GroqProvider implements AIProvider {
         requestBody.response_format = { type: "json_object" };
       }
 
-      const message = await client.chat.completions.create(requestBody);
+      const message = await client.chat.completions.create(requestBody as any);
 
       // Extract text from OpenAI-compatible response
       const response = message.choices[0]?.message?.content ?? "";
