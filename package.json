@@ -1,0 +1,20 @@
+{
+  "name": "whatsapp-bot",
+  "module": "index.ts",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "private": true,
+  "scripts": {
+    "dev": "bash -c 'cd packages/web && bun run dev & cd packages/server && bun run dev'",
+    "build": "bash -c 'cd packages/web && bun run build && cd packages/server && bun run build'",
+    "start": "bun run --cwd packages/server start"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
