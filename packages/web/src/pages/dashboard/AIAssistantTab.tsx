@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -71,8 +71,6 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
 
   // Contacts and per-contact settings
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [contactsLoading, setContactsLoading] = useState(false);
-  const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
 
   // API test state
   const [testLoading, setTestLoading] = useState(false);
@@ -82,20 +80,20 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
   const [personaModalOpen, setPersonaModalOpen] = useState(false);
   const [personaData, setPersonaData] = useState<string>("");
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
-  const [historyData, setHistoryData] = useState<any[]>([]);
-
-  // Polling ref
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [historyData, setHistoryData] = useState<Array<{ sender: string; timestamp: string; content: string }>>([]);
 
   // Load initial data
   useEffect(() => {
-    loadSettings();
-    loadContacts();
-    loadUsageStats();
+    void loadSettings();
+    void loadContacts();
+    void loadUsageStats();
 
     // Auto-refresh stats every 30 seconds
-    const interval = setInterval(loadUsageStats, 30000);
+    const interval = setInterval(() => {
+      void loadUsageStats();
+    }, 30000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadSettings = async () => {
@@ -114,7 +112,6 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
   };
 
   const loadContacts = async () => {
-    setContactsLoading(true);
     try {
       const res = await fetch(`${apiUrl}/api/ai/history`, {
         credentials: "include",
@@ -122,14 +119,9 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
       if (res.ok) {
         const data = await res.json();
         setContacts(Array.isArray(data.contacts) ? data.contacts : []);
-        if (data.contacts?.length > 0) {
-          setSelectedContactId(data.contacts[0].id);
-        }
       }
     } catch (err) {
       console.error("Failed to load contacts:", err);
-    } finally {
-      setContactsLoading(false);
     }
   };
 

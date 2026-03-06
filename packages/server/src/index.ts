@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { auth } from './lib/auth'
 import { whatsappRouter } from './routes/whatsapp'
+import { aiRouter } from './routes/ai'
 import { logger } from './lib/logger'
 import inviteCodes from './config/invite-codes.json'
 import { restoreScheduledMessages } from './services/schedule.service'
@@ -39,6 +40,7 @@ app.post('/api/auth/sign-up/email', async (c) => {
 
 app.all('/api/auth/*', (c) => auth.handler(c.req.raw))
 app.route('/api/whatsapp', whatsappRouter)
+app.route('/api/ai', aiRouter)
 
 app.get('/', (c) => {
   logger.info('Health check')

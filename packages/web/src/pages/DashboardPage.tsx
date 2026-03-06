@@ -9,6 +9,7 @@ import {
   FileText,
   Menu,
   LogOut,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -26,8 +27,9 @@ import { BulkMessagesTab } from "./dashboard/BulkMessagesTab";
 import { ScheduleTab } from "./dashboard/ScheduleTab";
 import { AutoReplyTab } from "./dashboard/AutoReplyTab";
 import { TemplatesTab } from "./dashboard/TemplatesTab";
+import { AIAssistantTab } from "./dashboard/AIAssistantTab";
 
-type Page = "overview" | "connection" | "bulk" | "schedule" | "auto-reply" | "templates";
+type Page = "overview" | "connection" | "bulk" | "schedule" | "auto-reply" | "templates" | "ai-assistant";
 
 const NAV_ITEMS: { id: Page; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -36,6 +38,7 @@ const NAV_ITEMS: { id: Page; label: string; icon: React.ComponentType<{ classNam
   { id: "schedule", label: "Schedule", icon: CalendarClock },
   { id: "auto-reply", label: "Auto Reply", icon: MessageSquareReply },
   { id: "templates", label: "Templates", icon: FileText },
+  { id: "ai-assistant", label: "AI Assistant", icon: Zap },
 ];
 
 const PAGE_TITLES: Record<Page, string> = {
@@ -45,6 +48,7 @@ const PAGE_TITLES: Record<Page, string> = {
   schedule: "Schedule",
   "auto-reply": "Auto Reply",
   templates: "Templates",
+  "ai-assistant": "AI Assistant",
 };
 
 export default function DashboardPage() {
@@ -154,6 +158,7 @@ export default function DashboardPage() {
             {activePage === "schedule" && <ScheduleTab apiUrl={apiUrl} />}
             {activePage === "auto-reply" && <AutoReplyTab apiUrl={apiUrl} />}
             {activePage === "templates" && <TemplatesTab apiUrl={apiUrl} />}
+            {activePage === "ai-assistant" && <AIAssistantTab apiUrl={apiUrl} />}
           </div>
         </main>
       </div>
