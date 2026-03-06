@@ -3,6 +3,9 @@ import { getMessageHistory } from "./ai-assistant.service";
 import { getPersona, extractPersona, generatePersonaPrompt } from "./ai-persona.service";
 import { isProviderAvailable, getBestAvailableProvider, trackApiCall } from "./api-usage.service";
 import { logger } from "../lib/logger";
+import { db } from "../db";
+import { aiSettings, apiKeys } from "../db/schema";
+import { eq, and } from "drizzle-orm";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -262,14 +265,15 @@ Latest message to respond to: "${message}"
 Generate your response as if you are this contact, mimicking their messaging style. Keep it natural and conversational.`;
 
     // Select provider
-    const provider = await selectProvider(userId);
-    logger.debug("Selected provider for mimic mode", { userId, provider });
+    const { provider, isPrimary } = await selectProvider(userId);
+    logger.debug("Selected provider for mimic mode", { userId, provider, isPrimary });
 
     // Generate response
-    const response = await callAIProvider(provider, fullPrompt);
+    const response = await callAIProvider(userId, provider, fullPrompt, isPrimary);
 
     // Track API call
-    await trackApiCall(userId, provider, provider === "groq" ? "mixtral-8x7b-32768" : "gemini-1.5-flash");
+    const model = provider === "groq" ? (isPrimary ? "llama-3.1-8b-instant" : "llama-3.1-70b-versatile") : "gemini-1.5-flash";
+    await trackApiCall(userId, provider, model);
 
     return { response, provider };
   } catch (error) {
@@ -316,14 +320,15 @@ Message: "${message}"
 Your analysis/response:`;
 
     // Select provider
-    const provider = await selectProvider(userId);
-    logger.debug("Selected provider for explain mode", { userId, provider });
+    const { provider, isPrimary } = await selectProvider(userId);
+    logger.debug("Selected provider for explain mode", { userId, provider, isPrimary });
 
     // Generate response
-    const response = await callAIProvider(provider, fullPrompt);
+    const response = await callAIProvider(userId, provider, fullPrompt, isPrimary);
 
     // Track API call
-    await trackApiCall(userId, provider, provider === "groq" ? "mixtral-8x7b-32768" : "gemini-1.5-flash");
+    const model = provider === "groq" ? (isPrimary ? "llama-3.1-8b-instant" : "llama-3.1-70b-versatile") : "gemini-1.5-flash";
+    await trackApiCall(userId, provider, model);
 
     return { response, provider };
   } catch (error) {
@@ -337,31 +342,38 @@ Your analysis/response:`;
 }
 
 /**
- * Select best available provider with fallback
+ * Select best available provider using user's configured primary/fallback
  */
-async function selectProvider(userId: string): Promise<"groq" | "gemini"> {
+async function selectProvider(userId: string): Promise<{ provider: "groq" | "gemini"; isPrimary: boolean }> {
   try {
-    // Try primary provider (groq)
-    const groqAvailable = await isProviderAvailable(userId, "groq");
-    if (groqAvailable) {
-      return "groq";
+    // Get user's provider settings
+    const settingsResult = await db
+      .select({ primaryProvider: aiSettings.primaryProvider, fallbackProvider: aiSettings.fallbackProvider })
+      .from(aiSettings)
+      .where(eq(aiSettings.userId, userId))
+      .limit(1);
+
+    const primaryProvider = settingsResult[0]?.primaryProvider ?? "groq";
+    const fallbackProvider = settingsResult[0]?.fallbackProvider ?? "gemini";
+
+    // Try primary provider
+    const primaryAvailable = await isProviderAvailable(userId, primaryProvider);
+    if (primaryAvailable) {
+      return { provider: primaryProvider, isPrimary: true };
     }
 
-    // Try fallback (gemini)
-    const geminiAvailable = await isProviderAvailable(userId, "gemini");
-    if (geminiAvailable) {
-      logger.info("Groq unavailable, switching to Gemini", { userId });
-      return "gemini";
+    // Try fallback
+    const fallbackAvailable = await isProviderAvailable(userId, fallbackProvider);
+    if (fallbackAvailable) {
+      logger.info("Primary provider unavailable, switching to fallback", { userId, primaryProvider, fallbackProvider });
+      return { provider: fallbackProvider, isPrimary: false };
     }
 
-    // Both unavailable - throw error
+    // Both unavailable
     logger.error("All providers unavailable", { userId });
     throw new Error("All AI providers are unavailable due to rate limits");
   } catch (error) {
-    logger.error("Provider selection failed", {
-      error: String(error),
-      userId,
-    });
+    logger.error("Provider selection failed", { error: String(error), userId });
     throw error;
   }
 }
@@ -369,26 +381,53 @@ async function selectProvider(userId: string): Promise<"groq" | "gemini"> {
 /**
  * Call AI provider to generate response
  */
-async function callAIProvider(provider: "groq" | "gemini", prompt: string): Promise<string> {
+async function callAIProvider(userId: string, provider: "groq" | "gemini", prompt: string, isPrimary: boolean = true): Promise<string> {
   try {
-    const apiKeys = provider === "groq" 
-      ? (process.env.GROQ_API_KEY || "").split(",")
-      : (process.env.GEMINI_API_KEY || "").split(",");
+    // Get user's DB-stored API keys first, fall back to env vars
+    const dbKeys = await db
+      .select({ keyValue: apiKeys.keyValue })
+      .from(apiKeys)
+      .where(and(eq(apiKeys.userId, userId), eq(apiKeys.provider, provider)));
 
-    if (!apiKeys || apiKeys.length === 0 || !apiKeys[0]) {
+    const envKey = provider === "groq"
+      ? (process.env.GROQ_API_KEY || "")
+      : (process.env.GEMINI_API_KEY || "");
+
+    const allKeys = [
+      ...dbKeys.map((k) => k.keyValue),
+      ...envKey.split(",").map((k) => k.trim()).filter(Boolean),
+    ];
+
+    if (allKeys.length === 0) {
       throw new Error(`No API keys configured for ${provider}`);
     }
 
-    const aiProvider = createProvider(provider, apiKeys);
+    // Get user settings to retrieve the model
+    let model: string | undefined;
+    if (provider === "groq") {
+      try {
+        const userSettings = await db
+          .select({ groqModel: aiSettings.groqModel, fallbackGroqModel: aiSettings.fallbackGroqModel })
+          .from(aiSettings)
+          .where(eq(aiSettings.userId, userId))
+          .limit(1);
+
+        model = !isPrimary && userSettings[0]?.fallbackGroqModel
+          ? userSettings[0].fallbackGroqModel
+          : (userSettings[0]?.groqModel || "llama-3.1-8b-instant");
+      } catch (error) {
+        logger.warn("Failed to fetch groqModel from settings, using default", { userId, error: String(error) });
+        model = "llama-3.1-8b-instant";
+      }
+    }
+
+    const aiProvider = createProvider(provider, allKeys, model);
     const response = await aiProvider.generateResponse(prompt);
 
-    logger.debug("AI provider call successful", { provider });
+    logger.debug("AI provider call successful", { provider, model });
     return response;
   } catch (error) {
-    logger.error("AI provider call failed", {
-      error: String(error),
-      provider,
-    });
+    logger.error("AI provider call failed", { error: String(error), provider });
     throw error;
   }
 }

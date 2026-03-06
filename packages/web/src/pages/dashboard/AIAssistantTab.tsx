@@ -20,6 +20,15 @@ interface AISettings {
   enabled: boolean;
   primaryProvider: Provider;
   fallbackProvider: Provider;
+  groqModel?: string;
+  fallbackGroqModel?: string;
+}
+
+interface GroqApiKey {
+  id: string;
+  name?: string;
+  keyValue: string;
+  createdAt: string;
 }
 
 interface UsageStats {
@@ -46,6 +55,27 @@ interface APITestResult {
   provider: Provider;
   message: string;
 }
+
+// Comprehensive list of Groq models
+const GROQ_MODELS = [
+  { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B (Fastest)" },
+  { id: "llama-3.1-70b-versatile", name: "Llama 3.1 70B (Versatile)" },
+  { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B (Versatile)" },
+  { id: "llama-guard-4-12b", name: "Llama Guard 4 12B" },
+  { id: "meta-llama/llama-4-maverick-17b-128e-instruct", name: "Llama 4 Maverick 17B" },
+  { id: "meta-llama/llama-4-scout-17b-16e-instruct", name: "Llama 4 Scout 17B" },
+  { id: "meta-llama/llama-prompt-guard-2-86m", name: "Llama Prompt Guard 2 86M" },
+  { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B 32K (Default)" },
+  { id: "groq/compound", name: "Groq Compound" },
+  { id: "groq/compound-mini", name: "Groq Compound Mini" },
+  { id: "moonshotai/kimi-k2-instruct", name: "Kimi K2 Instruct" },
+  { id: "moonshotai/kimi-k2-instruct-0905", name: "Kimi K2 Instruct 0905" },
+  { id: "openai/gpt-oss-120b", name: "GPT OSS 120B" },
+  { id: "openai/gpt-oss-20b", name: "GPT OSS 20B" },
+  { id: "qwen/qwen3-32b", name: "Qwen3 32B" },
+  { id: "allam-2-7b", name: "Allam 2 7B" },
+  { id: "canopylabs/orpheus-v1-english", name: "Orpheus V1 English" },
+];
 
 /**
  * AI Assistant Dashboard Tab Component
@@ -82,11 +112,20 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [historyData, setHistoryData] = useState<Array<{ sender: string; timestamp: string; content: string }>>([]);
 
+  // API Key management state
+  const [groqApiKeys, setGroqApiKeys] = useState<GroqApiKey[]>([]);
+  const [newApiKey, setNewApiKey] = useState("");
+  const [newApiKeyName, setNewApiKeyName] = useState("");
+  const [showAddApiKey, setShowAddApiKey] = useState(false);
+  const [apiKeyError, setApiKeyError] = useState("");
+  const [apiKeySaving, setApiKeySaving] = useState(false);
+
   // Load initial data
   useEffect(() => {
     void loadSettings();
     void loadContacts();
     void loadUsageStats();
+    void loadGroqApiKeys();
 
     // Auto-refresh stats every 30 seconds
     const interval = setInterval(() => {
@@ -103,7 +142,14 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
       });
       if (res.ok) {
         const data = await res.json();
-        setSettings(data);
+        // Backend returns aiEnabled; map to state field enabled
+        setSettings({
+          enabled: data.aiEnabled ?? false,
+          primaryProvider: data.primaryProvider ?? "groq",
+          fallbackProvider: data.fallbackProvider ?? "gemini",
+          groqModel: data.groqModel,
+          fallbackGroqModel: data.fallbackGroqModel,
+        });
         setSettingsError("");
       }
     } catch (err) {
@@ -113,7 +159,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
 
   const loadContacts = async () => {
     try {
-      const res = await fetch(`${apiUrl}/api/ai/history`, {
+      const res = await fetch(`${apiUrl}/api/ai/contacts`, {
         credentials: "include",
       });
       if (res.ok) {
@@ -122,6 +168,20 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
       }
     } catch (err) {
       console.error("Failed to load contacts:", err);
+    }
+  };
+
+  const loadGroqApiKeys = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/ai/api-keys/groq`, {
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGroqApiKeys(Array.isArray(data.keys) ? data.keys : []);
+      }
+    } catch (err) {
+      console.error("Failed to load API keys:", err);
     }
   };
 
@@ -150,21 +210,35 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     setSettingsSuccess("");
 
     try {
+      const payload = {
+        aiEnabled: settings.enabled,
+        primaryProvider: settings.primaryProvider,
+        fallbackProvider: settings.fallbackProvider,
+        groqModel: settings.groqModel,
+        fallbackGroqModel: settings.fallbackGroqModel,
+      };
+
+      console.log("Saving settings:", payload);
+
       const res = await fetch(`${apiUrl}/api/ai/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify(settings),
+        body: JSON.stringify(payload),
       });
+
+      const data = await res.json();
+      console.log("Save response:", data);
 
       if (res.ok) {
         setSettingsSuccess("Settings saved successfully");
         setTimeout(() => setSettingsSuccess(""), 3000);
       } else {
-        throw new Error("Failed to save settings");
+        throw new Error(data.message || "Failed to save settings");
       }
     } catch (err) {
-      setSettingsError("Error saving settings. Please try again.");
+      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      setSettingsError(`Error saving settings: ${errorMsg}`);
       console.error(err);
     } finally {
       setSettingsSaving(false);
@@ -203,20 +277,81 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     }
   };
 
-  const handleRefreshPersona = async (contactId: string) => {
+  const handleAddApiKey = async () => {
+    if (!newApiKey.trim()) {
+      setApiKeyError("API key cannot be empty");
+      return;
+    }
+
+    setApiKeySaving(true);
+    setApiKeyError("");
+
     try {
-      const res = await fetch(`${apiUrl}/api/ai/refresh-persona`, {
+      const res = await fetch(`${apiUrl}/api/ai/api-keys/groq`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ contactId }),
+        body: JSON.stringify({
+          keyValue: newApiKey,
+          name: newApiKeyName || undefined,
+        }),
       });
 
       if (res.ok) {
-        // Update the contact's persona refresh time
+        const data = await res.json();
+        setGroqApiKeys([...groqApiKeys, data.key]);
+        setNewApiKey("");
+        setNewApiKeyName("");
+        setShowAddApiKey(false);
+      } else {
+        const data = await res.json();
+        setApiKeyError(data.message || "Failed to add API key");
+      }
+    } catch (err) {
+      setApiKeyError("Error adding API key. Please try again.");
+      console.error(err);
+    } finally {
+      setApiKeySaving(false);
+    }
+  };
+
+  const handleRemoveApiKey = async (keyId: string) => {
+    if (!confirm("Are you sure you want to remove this API key?")) return;
+
+    try {
+      const res = await fetch(`${apiUrl}/api/ai/api-keys/groq/${keyId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (res.ok) {
+        setGroqApiKeys(groqApiKeys.filter((k) => k.id !== keyId));
+      } else {
+        setApiKeyError("Failed to remove API key");
+      }
+    } catch (err) {
+      setApiKeyError("Error removing API key. Please try again.");
+      console.error(err);
+    }
+  };
+
+  const maskApiKey = (key: string): string => {
+    if (key.length <= 8) return "*".repeat(key.length);
+    return key.substring(0, 4) + "*".repeat(key.length - 8) + key.substring(key.length - 4);
+  };
+
+  const handleRefreshPersona = async (contactPhone: string) => {
+    try {
+      const res = await fetch(`${apiUrl}/api/ai/persona/${encodeURIComponent(contactPhone)}/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+
+      if (res.ok) {
         setContacts((prev) =>
           prev.map((c) =>
-            c.id === contactId
+            c.phone === contactPhone
               ? { ...c, personaLastRefresh: new Date().toISOString() }
               : c
           )
@@ -227,18 +362,18 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     }
   };
 
-  const handleToggleMimicMode = async (contactId: string, enabled: boolean) => {
+  const handleToggleMimicMode = async (contactPhone: string, enabled: boolean) => {
     try {
       const res = await fetch(`${apiUrl}/api/ai/mimic-mode`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ contactId, enabled }),
+        body: JSON.stringify({ contactId: contactPhone, enabled }),
       });
 
       if (res.ok) {
         setContacts((prev) =>
-          prev.map((c) => (c.id === contactId ? { ...c, mimicMode: enabled } : c))
+          prev.map((c) => (c.phone === contactPhone ? { ...c, mimicMode: enabled } : c))
         );
       }
     } catch (err) {
@@ -246,9 +381,9 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     }
   };
 
-  const handleViewPersona = async (contactId: string) => {
+  const handleViewPersona = async (contactPhone: string) => {
     try {
-      const res = await fetch(`${apiUrl}/api/ai/persona/${contactId}`, {
+      const res = await fetch(`${apiUrl}/api/ai/persona/${encodeURIComponent(contactPhone)}`, {
         credentials: "include",
       });
       if (res.ok) {
@@ -261,9 +396,9 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     }
   };
 
-  const handleViewHistory = async (contactId: string) => {
+  const handleViewHistory = async (contactPhone: string) => {
     try {
-      const res = await fetch(`${apiUrl}/api/ai/history/${contactId}`, {
+      const res = await fetch(`${apiUrl}/api/ai/history/${encodeURIComponent(contactPhone)}`, {
         credentials: "include",
       });
       if (res.ok) {
@@ -414,6 +549,140 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
             <p className="text-xs text-muted-foreground">
               Rate limit: {usage.gemini.used}/{usage.gemini.limit} calls
             </p>
+          </div>
+
+          {/* Groq Model Selection */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Primary Groq Model</label>
+            <Select
+              value={settings.groqModel || "llama-3.1-8b-instant"}
+              onValueChange={(value) =>
+                setSettings({
+                  ...settings,
+                  groqModel: value,
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {GROQ_MODELS.map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {model.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Primary model for Groq API calls
+            </p>
+          </div>
+
+          {/* Fallback Groq Model Selection */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Fallback Groq Model</label>
+            <Select
+              value={settings.fallbackGroqModel || "llama-3.1-70b-versatile"}
+              onValueChange={(value) =>
+                setSettings({
+                  ...settings,
+                  fallbackGroqModel: value,
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {GROQ_MODELS.map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {model.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Fallback model when primary is unavailable
+            </p>
+          </div>
+
+          {/* Groq API Key Management */}
+          <div className="space-y-2 md:col-span-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium">Groq API Keys</label>
+              <Button
+                onClick={() => setShowAddApiKey(!showAddApiKey)}
+                variant="outline"
+                size="sm"
+              >
+                {showAddApiKey ? "Cancel" : "Add Key"}
+              </Button>
+            </div>
+
+            {apiKeyError && (
+              <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                <AlertCircle className="h-4 w-4" />
+                {apiKeyError}
+              </div>
+            )}
+
+            {showAddApiKey && (
+              <div className="space-y-2 rounded-lg border border-dashed p-3">
+                <input
+                  type="text"
+                  placeholder="API Key"
+                  value={newApiKey}
+                  onChange={(e) => setNewApiKey(e.target.value)}
+                  className="w-full rounded border px-2 py-2 text-sm"
+                />
+                <input
+                  type="text"
+                  placeholder="Key name (optional)"
+                  value={newApiKeyName}
+                  onChange={(e) => setNewApiKeyName(e.target.value)}
+                  className="w-full rounded border px-2 py-2 text-sm"
+                />
+                <Button
+                  onClick={handleAddApiKey}
+                  disabled={apiKeySaving || !newApiKey.trim()}
+                  size="sm"
+                  className="w-full"
+                >
+                  {apiKeySaving ? "Adding..." : "Add API Key"}
+                </Button>
+              </div>
+            )}
+
+            {groqApiKeys.length > 0 ? (
+              <div className="space-y-2">
+                {groqApiKeys.map((key) => (
+                  <div
+                    key={key.id}
+                    className="flex items-center justify-between rounded border p-2 text-sm"
+                  >
+                    <div className="flex-1">
+                      <p className="font-medium">{key.name || "Unnamed Key"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {maskApiKey(key.keyValue)}
+                      </p>
+                    </div>
+                    <Button
+                      onClick={() => handleRemoveApiKey(key.id)}
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-600"
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No API keys added yet. Add one to use Groq API.
+              </p>
+            )}
           </div>
 
           {/* Test API Connection */}
@@ -572,7 +841,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                   </div>
                   <div className="flex gap-2">
                     <Button
-                      onClick={() => handleViewPersona(contact.id)}
+                      onClick={() => handleViewPersona(contact.phone)}
                       variant="outline"
                       size="sm"
                       className="gap-1"
@@ -581,7 +850,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                       View
                     </Button>
                     <Button
-                      onClick={() => handleRefreshPersona(contact.id)}
+                      onClick={() => handleRefreshPersona(contact.phone)}
                       variant="outline"
                       size="sm"
                       className="gap-1"
@@ -642,14 +911,14 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                     <Switch
                       checked={contact.mimicMode}
                       onCheckedChange={(enabled) =>
-                        handleToggleMimicMode(contact.id, enabled)
+                        handleToggleMimicMode(contact.phone, enabled)
                       }
                     />
                   </div>
 
                   <div className="flex gap-2">
                     <Button
-                      onClick={() => handleViewPersona(contact.id)}
+                      onClick={() => handleViewPersona(contact.phone)}
                       variant="outline"
                       size="sm"
                       className="gap-1 flex-1"
@@ -658,7 +927,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                       View Persona
                     </Button>
                     <Button
-                      onClick={() => handleViewHistory(contact.id)}
+                      onClick={() => handleViewHistory(contact.phone)}
                       variant="outline"
                       size="sm"
                       className="gap-1 flex-1"

@@ -8,8 +8,12 @@
   "private": true,
   "scripts": {
     "dev": "bash -c 'cd packages/web && bun run dev & cd packages/server && bun run dev'",
-    "build": "bash -c 'cd packages/web && bun run build && cd packages/server && bun run build'",
-    "start": "bun run --cwd packages/server start"
+    "build": "bash -c 'bun run --cwd packages/web build && bun run --cwd packages/server build'",
+    "start": "bun run --cwd packages/server start",
+    "db:generate": "bun run --cwd packages/server db:generate",
+    "db:migrate": "bun run --cwd packages/server db:migrate",
+    "db:studio": "bun run --cwd packages/server db:studio",
+    "deploy": "bash scripts/deploy.sh"
   },
   "devDependencies": {
     "@types/bun": "latest"

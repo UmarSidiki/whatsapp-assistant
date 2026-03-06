@@ -40,7 +40,7 @@ export interface AIProvider {
 
 /**
  * Groq API Provider
- * Supports multiple API keys with round-robin rotation
+ * Supports multiple API keys with round-robin rotation and configurable models
  */
 export class GroqProvider implements AIProvider {
   name = "groq";
@@ -49,12 +49,23 @@ export class GroqProvider implements AIProvider {
   private requestTimestamps: number[] = [];
   private readonly RATE_LIMIT_WINDOW = 60000; // 1 minute
   private readonly RATE_LIMIT_THRESHOLD = 30; // ~30 requests per minute
+  private model: string = "mixtral-8x7b-32768";
 
-  constructor(apiKeys: string[]) {
+  constructor(apiKeys: string[], model?: string) {
     if (!apiKeys || apiKeys.length === 0) {
       throw new ProviderError("At least one API key is required for GroqProvider", 400);
     }
     this.apiKeys = apiKeys;
+    if (model) {
+      this.model = model;
+    }
+  }
+
+  /**
+   * Set the model to use for API calls
+   */
+  setModel(model: string): void {
+    this.model = model;
   }
 
   /**
@@ -69,12 +80,11 @@ export class GroqProvider implements AIProvider {
       // Dynamically import to avoid hard dependency
       let Groq;
       try {
-        // @ts-ignore - optional dependency not installed yet
-        const module = await import("@groq/sdk");
+        const module = await import("groq-sdk");
         Groq = module.default || module.Groq;
       } catch {
         throw new ProviderError(
-          "Groq SDK not installed. Install with: npm install @groq/sdk",
+          "Groq SDK not installed. Install with: bun add groq-sdk",
           500
         );
       }
@@ -85,8 +95,8 @@ export class GroqProvider implements AIProvider {
 
       const fullPrompt = context ? `Context: ${context}\n\nPrompt: ${prompt}` : prompt;
 
-      const message = await client.messages.create({
-        model: "mixtral-8x7b-32768",
+      const message = await client.chat.completions.create({
+        model: this.model,
         max_tokens: 2048,
         temperature: 0.7,
         messages: [
@@ -97,11 +107,8 @@ export class GroqProvider implements AIProvider {
         ],
       });
 
-      // Extract text from response
-      const response = message.content
-        .filter((block) => block.type === "text")
-        .map((block) => ("text" in block ? block.text : ""))
-        .join("");
+      // Extract text from OpenAI-compatible response
+      const response = message.choices[0]?.message?.content ?? "";
 
       // Track request for rate limiting
       this.requestTimestamps.push(Date.now());
@@ -187,12 +194,11 @@ export class GeminiProvider implements AIProvider {
       // Dynamically import to avoid hard dependency
       let GoogleGenerativeAI;
       try {
-        // @ts-ignore - optional dependency not installed yet
         const module = await import("@google/generative-ai");
         GoogleGenerativeAI = module.GoogleGenerativeAI;
       } catch {
         throw new ProviderError(
-          "Google Generative AI SDK not installed. Install with: npm install @google/generative-ai",
+          "Google Generative AI SDK not installed. Install with: bun add @google/generative-ai",
           500
         );
       }
@@ -274,11 +280,13 @@ export class GeminiProvider implements AIProvider {
  * Factory function to create AI provider instances
  * @param name - Provider name: 'groq' or 'gemini'
  * @param apiKeys - Array of API keys for the provider
+ * @param model - Optional model to use (for groq provider)
  * @returns Configured AIProvider instance
  */
 export function createProvider(
   name: "groq" | "gemini",
-  apiKeys: string[]
+  apiKeys: string[],
+  model?: string
 ): AIProvider {
   if (!apiKeys || apiKeys.length === 0) {
     throw new ProviderError("API keys are required to create a provider", 400);
@@ -286,7 +294,7 @@ export function createProvider(
 
   switch (name) {
     case "groq":
-      return new GroqProvider(apiKeys);
+      return new GroqProvider(apiKeys, model);
     case "gemini":
       return new GeminiProvider(apiKeys);
     default:

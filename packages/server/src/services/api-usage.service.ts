@@ -2,7 +2,7 @@ import { db } from "../db";
 import { aiApiUsage } from "../db/schema";
 import { logger } from "../lib/logger";
 import { ProviderError } from "../lib/ai-provider";
-import { eq, and, gt, count } from "drizzle-orm";
+import { eq, and, gt, lt, count } from "drizzle-orm";
 
 // ─── Rate Limit Configuration ─────────────────────────────────────────────
 
@@ -39,10 +39,10 @@ function scheduleCleanup(): void {
  */
 async function cleanupOldEntries(): Promise<void> {
   try {
-    const cutoffTime = new Date(Date.now() - RATE_LIMIT_WINDOW_MS);
+    const now = new Date();
     await db
       .delete(aiApiUsage)
-      .where(gt(aiApiUsage.resetAt, cutoffTime))
+      .where(lt(aiApiUsage.resetAt, now))
       .run();
     logger.debug("API usage cleanup completed");
   } catch (error) {
@@ -108,11 +108,11 @@ export async function isProviderAvailable(
   if (!provider) throw new Error("provider is required");
 
   try {
-    // Clean up old entries first
-    const cutoffTime = new Date(Date.now() - RATE_LIMIT_WINDOW_MS);
+    // Remove expired entries first
+    const now = new Date();
     await db
       .delete(aiApiUsage)
-      .where(and(eq(aiApiUsage.userId, userId), gt(aiApiUsage.resetAt, cutoffTime)))
+      .where(and(eq(aiApiUsage.userId, userId), lt(aiApiUsage.resetAt, now)))
       .run();
 
     // Count calls in the last 60 seconds

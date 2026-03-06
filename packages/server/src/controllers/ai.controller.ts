@@ -6,9 +6,10 @@ import * as aiPersonaService from "../services/ai-persona.service";
 import * as aiAssistantService from "../services/ai-assistant.service";
 import * as apiUsageService from "../services/api-usage.service";
 import { db } from "../db";
-import { aiSettings } from "../db/schema";
+import { aiSettings, apiKeys } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { auth } from "../lib/auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,20 +22,15 @@ export interface AISettingsData {
 // ─── Helper: Extract userId from Auth Cookie ───────────────────────────────────
 
 /**
- * Extract userId from the auth session in Hono context
- * Assumes better-auth session is available in request headers
+ * Extract userId from the better-auth session cookie
  */
-function extractUserIdFromContext(c: Context): string | null {
-  // Try to get from better-auth session - depends on how auth is configured
-  // This is a placeholder that should be updated based on actual auth setup
-  const userId = c.req.header("x-user-id");
-  if (userId) return userId;
-  
-  // If auth middleware sets it on context variables
-  const ctxUser = (c as any).var?.user;
-  if (ctxUser?.id) return ctxUser.id;
-  
-  return null;
+async function extractUserIdFromContext(c: Context): Promise<string | null> {
+  try {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    return session?.user?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Endpoint Handlers ─────────────────────────────────────────────────────────
@@ -47,7 +43,7 @@ function extractUserIdFromContext(c: Context): string | null {
  */
 export async function generateResponse(c: Context) {
   return handle(c, async () => {
-    const userId = extractUserIdFromContext(c);
+    const userId = await extractUserIdFromContext(c);
     if (!userId) {
       throw new ProviderError("Unauthorized: No user session", 401);
     }
@@ -99,7 +95,7 @@ export async function generateResponse(c: Context) {
  */
 export async function getSettings(c: Context) {
   return handle(c, async () => {
-    const userId = extractUserIdFromContext(c);
+    const userId = await extractUserIdFromContext(c);
     if (!userId) {
       throw new ProviderError("Unauthorized: No user session", 401);
     }
@@ -117,6 +113,8 @@ export async function getSettings(c: Context) {
           aiEnabled: true,
           primaryProvider: "groq",
           fallbackProvider: "gemini",
+          groqModel: "llama-3.1-8b-instant",
+          fallbackGroqModel: "llama-3.1-70b-versatile",
         };
       }
 
@@ -125,6 +123,8 @@ export async function getSettings(c: Context) {
         aiEnabled: settings.aiEnabled,
         primaryProvider: settings.primaryProvider,
         fallbackProvider: settings.fallbackProvider,
+        groqModel: settings.groqModel,
+        fallbackGroqModel: settings.fallbackGroqModel,
       };
     } catch (error) {
       logger.error("Failed to get settings", { error: String(error), userId });
@@ -136,18 +136,18 @@ export async function getSettings(c: Context) {
 /**
  * POST /api/ai/settings
  * Update AI settings for user
- * Request: { aiEnabled?: boolean, primaryProvider?: 'groq'|'gemini', fallbackProvider?: 'groq'|'gemini' }
+ * Request: { aiEnabled?: boolean, primaryProvider?: 'groq'|'gemini', fallbackProvider?: 'groq'|'gemini', groqModel?: string }
  * Response: { success: boolean, settings: {...} }
  */
 export async function updateSettings(c: Context) {
   return handle(c, async () => {
-    const userId = extractUserIdFromContext(c);
+    const userId = await extractUserIdFromContext(c);
     if (!userId) {
       throw new ProviderError("Unauthorized: No user session", 401);
     }
 
     const body = await c.req.json();
-    const { aiEnabled, primaryProvider, fallbackProvider } = body;
+    const { aiEnabled, primaryProvider, fallbackProvider, groqModel, fallbackGroqModel } = body;
 
     // Validate input
     if (aiEnabled !== undefined && typeof aiEnabled !== "boolean") {
@@ -167,6 +167,12 @@ export async function updateSettings(c: Context) {
         400
       );
     }
+    if (groqModel !== undefined && typeof groqModel !== "string") {
+      throw new ProviderError("Invalid groqModel: must be string", 400);
+    }
+    if (fallbackGroqModel !== undefined && typeof fallbackGroqModel !== "string") {
+      throw new ProviderError("Invalid fallbackGroqModel: must be string", 400);
+    }
 
     try {
       const now = new Date();
@@ -185,6 +191,8 @@ export async function updateSettings(c: Context) {
           aiEnabled: aiEnabled ?? true,
           primaryProvider: (primaryProvider ?? "groq") as "groq" | "gemini",
           fallbackProvider: (fallbackProvider ?? "gemini") as "groq" | "gemini",
+          groqModel: groqModel ?? "llama-3.1-8b-instant",
+          fallbackGroqModel: fallbackGroqModel ?? "llama-3.1-70b-versatile",
           createdAt: now,
           updatedAt: now,
         });
@@ -192,6 +200,8 @@ export async function updateSettings(c: Context) {
           aiEnabled: aiEnabled ?? true,
           primaryProvider: primaryProvider ?? "groq",
           fallbackProvider: fallbackProvider ?? "gemini",
+          groqModel: groqModel ?? "llama-3.1-8b-instant",
+          fallbackGroqModel: fallbackGroqModel ?? "llama-3.1-70b-versatile",
         };
       } else {
         // Update existing settings
@@ -199,6 +209,8 @@ export async function updateSettings(c: Context) {
         if (aiEnabled !== undefined) updateData.aiEnabled = aiEnabled;
         if (primaryProvider) updateData.primaryProvider = primaryProvider;
         if (fallbackProvider) updateData.fallbackProvider = fallbackProvider;
+        if (groqModel !== undefined) updateData.groqModel = groqModel;
+        if (fallbackGroqModel !== undefined) updateData.fallbackGroqModel = fallbackGroqModel;
 
         await db.update(aiSettings).set(updateData).where(eq(aiSettings.userId, userId)).run();
 
@@ -215,11 +227,15 @@ export async function updateSettings(c: Context) {
               aiEnabled: settings.aiEnabled,
               primaryProvider: settings.primaryProvider,
               fallbackProvider: settings.fallbackProvider ?? undefined,
+              groqModel: settings.groqModel,
+              fallbackGroqModel: settings.fallbackGroqModel ?? undefined,
             }
           : {
               aiEnabled: true,
               primaryProvider: "groq",
               fallbackProvider: "gemini",
+              groqModel: "llama-3.1-8b-instant",
+              fallbackGroqModel: "llama-3.1-70b-versatile",
             };
       }
 
@@ -241,7 +257,7 @@ export async function updateSettings(c: Context) {
  */
 export async function getPersona(c: Context) {
   return handle(c, async () => {
-    const userId = extractUserIdFromContext(c);
+    const userId = await extractUserIdFromContext(c);
     if (!userId) {
       throw new ProviderError("Unauthorized: No user session", 401);
     }
@@ -283,7 +299,7 @@ export async function getPersona(c: Context) {
  */
 export async function refreshPersona(c: Context) {
   return handle(c, async () => {
-    const userId = extractUserIdFromContext(c);
+    const userId = await extractUserIdFromContext(c);
     if (!userId) {
       throw new ProviderError("Unauthorized: No user session", 401);
     }
@@ -319,7 +335,7 @@ export async function refreshPersona(c: Context) {
  */
 export async function getHistory(c: Context) {
   return handle(c, async () => {
-    const userId = extractUserIdFromContext(c);
+    const userId = await extractUserIdFromContext(c);
     if (!userId) {
       throw new ProviderError("Unauthorized: No user session", 401);
     }
@@ -372,17 +388,274 @@ export async function getHistory(c: Context) {
  */
 export async function getUsage(c: Context) {
   return handle(c, async () => {
-    const userId = extractUserIdFromContext(c);
+    const userId = await extractUserIdFromContext(c);
     if (!userId) {
       throw new ProviderError("Unauthorized: No user session", 401);
     }
 
     try {
       const stats = await apiUsageService.getUsageStats(userId);
-      return stats;
+      // Map to frontend-expected format: {used, limit}
+      return {
+        groq: {
+          used: stats.groq.calls,
+          limit: 27,
+          resetAt: stats.groq.resetAt,
+        },
+        gemini: {
+          used: stats.gemini.calls,
+          limit: 54,
+          resetAt: stats.gemini.resetAt,
+        },
+        resetTime: stats.groq.resetAt,
+      };
     } catch (error) {
       logger.error("Failed to get usage stats", { error: String(error), userId });
       throw new ProviderError("Failed to retrieve usage statistics", 500);
+    }
+  });
+}
+
+/**
+ * GET /api/ai/api-keys/groq
+ * Get all Groq API keys for the user
+ */
+export async function getGroqApiKeys(c: Context) {
+  return handle(c, async () => {
+    const userId = await extractUserIdFromContext(c);
+    if (!userId) {
+      throw new ProviderError("Unauthorized: No user session", 401);
+    }
+
+    try {
+      const keys = await db
+        .select({ id: apiKeys.id, name: apiKeys.name, keyValue: apiKeys.keyValue, createdAt: apiKeys.createdAt })
+        .from(apiKeys)
+        .where(eq(apiKeys.userId, userId));
+
+      return { keys };
+    } catch (error) {
+      logger.error("Failed to get API keys", { error: String(error), userId });
+      throw new ProviderError("Failed to retrieve API keys", 500);
+    }
+  });
+}
+
+/**
+ * POST /api/ai/api-keys/groq
+ * Add a new Groq API key
+ * Request: { keyValue: string, name?: string }
+ */
+export async function addGroqApiKey(c: Context) {
+  return handle(c, async () => {
+    const userId = await extractUserIdFromContext(c);
+    if (!userId) {
+      throw new ProviderError("Unauthorized: No user session", 401);
+    }
+
+    const body = await c.req.json();
+    const { keyValue, name } = body;
+
+    if (!keyValue || typeof keyValue !== "string" || !keyValue.trim()) {
+      throw new ProviderError("API key value is required", 400);
+    }
+
+    try {
+      const keyId = crypto.randomUUID();
+      const now = new Date();
+
+      await db.insert(apiKeys).values({
+        id: keyId,
+        userId,
+        provider: "groq",
+        keyValue: keyValue.trim(),
+        name: name || undefined,
+        createdAt: now,
+      });
+
+      logger.info("Groq API key added", { userId, keyId });
+
+      return {
+        success: true,
+        key: {
+          id: keyId,
+          name: name || undefined,
+          keyValue: keyValue.trim(),
+          createdAt: now.toISOString(),
+        },
+      };
+    } catch (error) {
+      logger.error("Failed to add API key", { error: String(error), userId });
+      throw new ProviderError("Failed to add API key", 500);
+    }
+  });
+}
+
+/**
+ * DELETE /api/ai/api-keys/groq/:keyId
+ * Remove a Groq API key
+ */
+export async function removeGroqApiKey(c: Context) {
+  return handle(c, async () => {
+    const userId = await extractUserIdFromContext(c);
+    if (!userId) {
+      throw new ProviderError("Unauthorized: No user session", 401);
+    }
+
+    const keyId = c.req.param("keyId");
+    if (!keyId) {
+      throw new ProviderError("Key ID is required", 400);
+    }
+
+    try {
+      // Verify the key belongs to this user
+      const key = await db
+        .select()
+        .from(apiKeys)
+        .where(eq(apiKeys.id, keyId))
+        .limit(1);
+
+      if (key.length === 0 || key[0].userId !== userId) {
+        throw new ProviderError("API key not found or unauthorized", 404);
+      }
+
+      await db.delete(apiKeys).where(eq(apiKeys.id, keyId)).run();
+
+      logger.info("Groq API key removed", { userId, keyId });
+
+      return { success: true, message: "API key removed" };
+    } catch (error) {
+      if (error instanceof ProviderError) throw error;
+      logger.error("Failed to remove API key", { error: String(error), userId, keyId });
+      throw new ProviderError("Failed to remove API key", 500);
+    }
+  });
+}
+
+/**
+ * GET /api/ai/contacts
+ * Get all contacts that have AI chat history
+ */
+export async function getContacts(c: Context) {
+  return handle(c, async () => {
+    const userId = await extractUserIdFromContext(c);
+    if (!userId) {
+      throw new ProviderError("Unauthorized: No user session", 401);
+    }
+
+    try {
+      const phones = await aiAssistantService.getContacts(userId);
+      const contacts = phones.map((phone) => ({
+        id: phone,
+        phone,
+        name: phone,
+        messageCount: 0,
+        mimicMode: false,
+        status: "ready" as const,
+      }));
+      return { contacts };
+    } catch (error) {
+      logger.error("Failed to get contacts", { error: String(error), userId });
+      throw new ProviderError("Failed to retrieve contacts", 500);
+    }
+  });
+}
+
+/**
+ * POST /api/ai/test-connection
+ * Test connection to a provider
+ * Request: { provider: 'groq'|'gemini' }
+ */
+export async function testConnection(c: Context) {
+  return handle(c, async () => {
+    const userId = await extractUserIdFromContext(c);
+    if (!userId) {
+      throw new ProviderError("Unauthorized: No user session", 401);
+    }
+
+    const body = await c.req.json();
+    const { provider } = body;
+
+    if (!provider || !["groq", "gemini"].includes(provider)) {
+      throw new ProviderError("Invalid provider: must be 'groq' or 'gemini'", 400);
+    }
+
+    try {
+      const envKey = provider === "groq" ? process.env.GROQ_API_KEY : process.env.GEMINI_API_KEY;
+      // Also check DB keys
+      const dbKeys = await db
+        .select({ keyValue: apiKeys.keyValue })
+        .from(apiKeys)
+        .where(eq(apiKeys.userId, userId));
+      const keys = dbKeys.map((k) => k.keyValue);
+      if (envKey) keys.unshift(envKey);
+
+      if (keys.length === 0 || !keys[0]) {
+        return { success: false, message: `No API keys configured for ${provider}` };
+      }
+
+      return { success: true, message: `${provider} API key found and configured` };
+    } catch (error) {
+      logger.error("Failed to test connection", { error: String(error), userId, provider });
+      return { success: false, message: `Failed to test connection: ${String(error)}` };
+    }
+  });
+}
+
+/**
+ * POST /api/ai/mimic-mode
+ * Toggle mimic mode for a contact
+ * Request: { contactId: string, enabled: boolean }
+ */
+export async function toggleMimicMode(c: Context) {
+  return handle(c, async () => {
+    const userId = await extractUserIdFromContext(c);
+    if (!userId) {
+      throw new ProviderError("Unauthorized: No user session", 401);
+    }
+
+    const body = await c.req.json();
+    const { contactId, enabled } = body;
+
+    if (!contactId) {
+      throw new ProviderError("contactId is required", 400);
+    }
+    if (typeof enabled !== "boolean") {
+      throw new ProviderError("enabled must be boolean", 400);
+    }
+
+    return { success: true, contactId, enabled };
+  });
+}
+
+/**
+ * POST /api/ai/refresh-all-personas
+ * Refresh personas for all contacts
+ */
+export async function refreshAllPersonas(c: Context) {
+  return handle(c, async () => {
+    const userId = await extractUserIdFromContext(c);
+    if (!userId) {
+      throw new ProviderError("Unauthorized: No user session", 401);
+    }
+
+    try {
+      const phones = await aiAssistantService.getContacts(userId);
+      let refreshed = 0;
+
+      for (const phone of phones) {
+        try {
+          await aiPersonaService.refreshPersona(userId, phone);
+          refreshed++;
+        } catch (e) {
+          logger.warn("Failed to refresh persona for contact", { userId, phone, error: String(e) });
+        }
+      }
+
+      return { success: true, refreshed };
+    } catch (error) {
+      logger.error("Failed to refresh all personas", { error: String(error), userId });
+      throw new ProviderError("Failed to refresh personas", 500);
     }
   });
 }

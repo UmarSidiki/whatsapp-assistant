@@ -143,9 +143,25 @@ export const aiSettings = sqliteTable("ai_settings", {
     .notNull()
     .default("groq"),
   fallbackProvider: text("fallbackProvider", { enum: ["groq", "gemini"] }),
+  groqModel: text("groqModel").notNull().default("llama-3.1-8b-instant"),
+  fallbackGroqModel: text("fallbackGroqModel"),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
 });
+
+/** Store user API keys for various providers */
+export const apiKeys = sqliteTable("api_keys", {
+  id: text("id").primaryKey(),
+  userId: text("userId")
+    .notNull()
+    .references(() => user.id),
+  provider: text("provider", { enum: ["groq", "gemini"] }).notNull(),
+  keyValue: text("keyValue").notNull(),
+  name: text("name"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+}, (t) => [
+  index("api_keys_user_provider_idx").on(t.userId, t.provider),
+]);
 
 /** Track API call counts for rate limit fallback */
 export const aiApiUsage = sqliteTable("ai_api_usage", {
