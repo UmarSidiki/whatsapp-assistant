@@ -13,7 +13,7 @@ const app = new Hono()
 restoreScheduledMessages().catch(e => logger.error("Failed to restore scheduled messages", e))
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174'],
+  origin: ['http://localhost:5173', 'http://localhost:5174', 'https://assistant.itupdown.com'],
   credentials: true,
 }))
 
