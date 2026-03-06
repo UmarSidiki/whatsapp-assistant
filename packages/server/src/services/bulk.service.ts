@@ -1,5 +1,6 @@
 import { logger } from "../lib/logger";
-import { wa, requireConnected, toJid, ServiceError } from "./wa-socket";
+import { requireConnectedFor, toJid, ServiceError } from "./wa-socket";
+import { sendSegmented } from "./segment.service";
 import { db } from "../db";
 import { messageLog } from "../db/schema";
 
@@ -19,6 +20,7 @@ export interface BulkJob {
 }
 
 export interface BulkSendParams {
+  userId: string;
   contacts: BulkContact[];
   messageTemplate: string;
   antiBan: boolean;
@@ -26,9 +28,9 @@ export interface BulkSendParams {
   maxDelay?: number;
 }
 
-// ─── State ────────────────────────────────────────────────────────────────────
+// ─── State (per-user) ─────────────────────────────────────────────────────────
 
-let bulkJob: BulkJob | null = null;
+const bulkJobs = new Map<string, BulkJob>();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -43,44 +45,47 @@ const interpolate = (tpl: string, vars: Record<string, string>) =>
 
 /** Start sending messages to all contacts. Runs in the background. */
 export async function startBulkSend(params: BulkSendParams): Promise<void> {
-  requireConnected();
-  if (bulkJob?.running) throw new ServiceError("A bulk job is already running", 409);
+  const { userId, contacts, messageTemplate, antiBan, minDelay = 3000, maxDelay = 10000 } = params;
+  requireConnectedFor(userId);
+  if (bulkJobs.get(userId)?.running) throw new ServiceError("A bulk job is already running", 409);
 
-  const { contacts, messageTemplate, antiBan, minDelay = 3000, maxDelay = 10000 } = params;
-  bulkJob = { total: contacts.length, sent: 0, failed: 0, running: true, errors: [] };
+  const job: BulkJob = { total: contacts.length, sent: 0, failed: 0, running: true, errors: [] };
+  bulkJobs.set(userId, job);
 
   (async () => {
     for (const contact of contacts) {
-      if (!bulkJob!.running) break;
+      if (!job.running) break;
       const text = interpolate(messageTemplate, contact);
+      const jid = toJid(contact.phone);
       try {
-        await wa.socket!.sendMessage(toJid(contact.phone), { text });
+        await sendSegmented(userId, jid, text);
         await db.insert(messageLog).values({
-          id: crypto.randomUUID(), type: "bulk", phone: contact.phone,
+          id: crypto.randomUUID(), userId, type: "bulk", phone: contact.phone,
           message: text, status: "sent", createdAt: new Date(),
         });
-        bulkJob!.sent++;
-        logger.info("Bulk sent", { phone: contact.phone });
+        job.sent++;
+        logger.info("Bulk sent", { userId, phone: contact.phone });
       } catch (e) {
         await db.insert(messageLog).values({
-          id: crypto.randomUUID(), type: "bulk", phone: contact.phone,
+          id: crypto.randomUUID(), userId, type: "bulk", phone: contact.phone,
           message: text, status: "failed", error: String(e), createdAt: new Date(),
         });
-        bulkJob!.failed++;
-        bulkJob!.errors.push({ phone: contact.phone, error: String(e) });
-        logger.error("Bulk failed", { phone: contact.phone, error: String(e) });
+        job.failed++;
+        job.errors.push({ phone: contact.phone, error: String(e) });
+        logger.error("Bulk failed", { userId, phone: contact.phone, error: String(e) });
       }
-      if (antiBan && bulkJob!.running) await sleep(rand(minDelay, maxDelay));
+      if (antiBan && job.running) await sleep(rand(minDelay, maxDelay));
     }
-    if (bulkJob) bulkJob.running = false;
-    logger.info("Bulk send complete", { sent: bulkJob?.sent, failed: bulkJob?.failed });
+    job.running = false;
+    logger.info("Bulk send complete", { userId, sent: job.sent, failed: job.failed });
   })();
 }
 
-export function getBulkStatus(): BulkJob {
-  return bulkJob ?? { total: 0, sent: 0, failed: 0, running: false, errors: [] };
+export function getBulkStatus(userId: string): BulkJob {
+  return bulkJobs.get(userId) ?? { total: 0, sent: 0, failed: 0, running: false, errors: [] };
 }
 
-export function stopBulk(): void {
-  if (bulkJob) bulkJob.running = false;
+export function stopBulk(userId: string): void {
+  const job = bulkJobs.get(userId);
+  if (job) job.running = false;
 }

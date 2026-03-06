@@ -380,26 +380,20 @@ async function selectProvider(userId: string): Promise<{ provider: "groq" | "gem
 
 /**
  * Call AI provider to generate response
+ * API keys come from the database only (per-account isolation)
  */
 async function callAIProvider(userId: string, provider: "groq" | "gemini", prompt: string, isPrimary: boolean = true): Promise<string> {
   try {
-    // Get user's DB-stored API keys first, fall back to env vars
+    // Get user's DB-stored API keys only (no env var fallback for per-account isolation)
     const dbKeys = await db
       .select({ keyValue: apiKeys.keyValue })
       .from(apiKeys)
       .where(and(eq(apiKeys.userId, userId), eq(apiKeys.provider, provider)));
 
-    const envKey = provider === "groq"
-      ? (process.env.GROQ_API_KEY || "")
-      : (process.env.GEMINI_API_KEY || "");
-
-    const allKeys = [
-      ...dbKeys.map((k) => k.keyValue),
-      ...envKey.split(",").map((k) => k.trim()).filter(Boolean),
-    ];
+    const allKeys = dbKeys.map((k) => k.keyValue).filter(Boolean);
 
     if (allKeys.length === 0) {
-      throw new Error(`No API keys configured for ${provider}`);
+      throw new Error(`No API keys configured for ${provider}. Add keys in AI Assistant settings.`);
     }
 
     // Get user settings to retrieve the model

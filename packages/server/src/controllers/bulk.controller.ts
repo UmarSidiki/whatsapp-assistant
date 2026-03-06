@@ -5,6 +5,7 @@ import type { BulkContact } from "../services/bulk.service";
 
 export async function startBulkSend(c: Context) {
   return handle(c, async () => {
+    const userId = c.get("userId") as string;
     const body = await c.req.json<{
       contacts: BulkContact[];
       messageTemplate: string;
@@ -12,16 +13,18 @@ export async function startBulkSend(c: Context) {
       minDelay?: number;
       maxDelay?: number;
     }>();
-    await bulkService.startBulkSend(body);
+    await bulkService.startBulkSend({ userId, ...body });
     return { message: "Bulk send started", total: body.contacts.length };
   });
 }
 
 export function getBulkStatus(c: Context) {
-  return c.json(bulkService.getBulkStatus());
+  const userId = c.get("userId") as string;
+  return c.json(bulkService.getBulkStatus(userId));
 }
 
 export function stopBulk(c: Context) {
-  bulkService.stopBulk();
+  const userId = c.get("userId") as string;
+  bulkService.stopBulk(userId);
   return c.json({ message: "Stopped" });
 }

@@ -1,7 +1,11 @@
 import { Hono } from "hono";
+import { requireAuth } from "../lib/auth-middleware";
 import * as aiController from "../controllers/ai.controller";
 
 const router = new Hono();
+
+// All routes require auth
+router.use("/*", requireAuth);
 
 // AI Response generation
 router.post("/response", aiController.generateResponse);

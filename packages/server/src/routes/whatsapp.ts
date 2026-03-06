@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { requireAuth } from "../lib/auth-middleware";
 import * as connection from "../controllers/connection.controller";
 import * as message from "../controllers/message.controller";
 import * as bulk from "../controllers/bulk.controller";
@@ -8,6 +9,9 @@ import * as stats from "../controllers/stats.controller";
 import * as templates from "../controllers/templates.controller";
 
 const router = new Hono();
+
+// All routes require auth
+router.use("/*", requireAuth);
 
 // Stats
 router.get("/stats", stats.getStats);

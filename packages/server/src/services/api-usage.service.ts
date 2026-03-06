@@ -110,6 +110,7 @@ export async function isProviderAvailable(
   try {
     // Remove expired entries first
     const now = new Date();
+    const cutoffTime = new Date(now.getTime() - RATE_LIMIT_WINDOW_MS);
     await db
       .delete(aiApiUsage)
       .where(and(eq(aiApiUsage.userId, userId), lt(aiApiUsage.resetAt, now)))

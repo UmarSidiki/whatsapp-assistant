@@ -1,7 +1,6 @@
-import { eq, and, desc, limit, sql } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { db } from "../db";
 import { aiChatHistory } from "../db/schema";
-import { wa, isIndividualJid } from "./wa-socket";
 import { logger } from "../lib/logger";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -10,62 +9,6 @@ export interface MessageHistoryItem {
   message: string;
   sender: "me" | "contact";
   timestamp: Date;
-}
-
-// ─── Initialization ───────────────────────────────────────────────────────────
-
-/**
- * Initialize AI message listener - hook into WhatsApp socket events
- * Call this once during app startup
- */
-export async function initializeAIListener(userId: string): Promise<void> {
-  if (!wa.socket) {
-    logger.warn("AI listener: WhatsApp socket not initialized yet");
-    return;
-  }
-
-  logger.info("AI listener initializing", { userId });
-
-  // Hook into incoming messages
-  wa.socket.ev.on("messages.upsert", async ({ messages, type }) => {
-    if (type !== "notify") return;
-
-    for (const msg of messages) {
-      const jid = msg.key.remoteJid ?? "";
-
-      // Only store messages from individual contacts
-      if (!isIndividualJid(jid)) continue;
-
-      // Extract contact phone from JID
-      const contactPhone = jid.replace("@s.whatsapp.net", "");
-
-      // Get message text
-      const text =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        "";
-
-      // Skip empty messages
-      if (!text.trim()) continue;
-
-      try {
-        // Store message based on direction
-        await storeMessage(
-          userId,
-          contactPhone,
-          text,
-          msg.key.fromMe ? "me" : "contact"
-        );
-      } catch (e) {
-        logger.warn("AI listener: Failed to store message", {
-          error: String(e),
-          jid,
-        });
-      }
-    }
-  });
-
-  logger.info("AI listener initialized", { userId });
 }
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
@@ -91,27 +34,17 @@ export async function storeMessage(
   }
 
   try {
-    const messageId = crypto.randomUUID();
-    const now = new Date();
-
     await db.insert(aiChatHistory).values({
-      id: messageId,
+      id: crypto.randomUUID(),
       userId,
       contactPhone: normalizedPhone,
       message: message.trim(),
       sender,
       isOutgoing: sender === "me",
-      timestamp: now,
-    });
-
-    logger.debug("Message stored", {
-      userId,
-      contactPhone: normalizedPhone,
-      sender,
+      timestamp: new Date(),
     });
   } catch (e) {
-    // Log error but don't throw - storage failures shouldn't break message flow
-    logger.warn("AI assistant: Failed to store message in database", {
+    logger.warn("AI assistant: Failed to store message", {
       error: String(e),
       userId,
       contactPhone,

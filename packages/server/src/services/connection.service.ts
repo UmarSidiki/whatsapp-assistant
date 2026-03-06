@@ -4,24 +4,40 @@ import makeWASocket, {
   DisconnectReason,
 } from "@whiskeysockets/baileys";
 import pino from "pino";
+import { existsSync, readdirSync } from "fs";
 import { logger } from "../lib/logger";
-import { wa, isIndividualJid } from "./wa-socket";
+import {
+  getSession,
+  setSession,
+  removeSession,
+  isIndividualJid,
+} from "./wa-socket";
 import { handleAutoReply } from "./autoreply.service";
+import { storeMessage } from "./ai-assistant.service";
+import { bufferIncomingMessage } from "./segment.service";
+
+// ─── Per-user auth directory ──────────────────────────────────────────────────
+
+const WA_AUTH_ROOT = "./wa-auth";
+
+function authDir(userId: string): string {
+  return `${WA_AUTH_ROOT}/${userId}`;
+}
 
 // ─── Connection ───────────────────────────────────────────────────────────────
 
-/** Initialize the WhatsApp socket and start listening for events. */
-export async function init(): Promise<void> {
-  if (wa.socket && (wa.status === "waiting_qr" || wa.status === "connected")) {
+/** Initialize the WhatsApp socket for a specific user. */
+export async function init(userId: string): Promise<void> {
+  const session = getSession(userId);
+  if (session.socket && (session.status === "waiting_qr" || session.status === "connected")) {
     return; // already active
   }
 
-  logger.info("WhatsApp initializing");
+  logger.info("WhatsApp initializing", { userId });
 
-  const { state, saveCreds } = await useMultiFileAuthState("./wa-auth");
+  const { state, saveCreds } = await useMultiFileAuthState(authDir(userId));
   const { version } = await fetchLatestBaileysVersion();
-  wa.status = "waiting_qr";
-  wa.qr = undefined;
+  setSession(userId, { status: "waiting_qr", qr: undefined });
 
   const sock = makeWASocket({
     version,
@@ -32,62 +48,106 @@ export async function init(): Promise<void> {
     markOnlineOnConnect: false,
     browser: ["Ubuntu", "Chrome", "110.0.5481.77"],
   });
-  wa.socket = sock;
+  setSession(userId, { socket: sock });
 
   sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
     if (qr) {
-      wa.qr = qr;
-      wa.status = "waiting_qr";
-      logger.info("QR code generated");
+      setSession(userId, { qr, status: "waiting_qr" });
+      logger.info("QR code generated", { userId });
     }
     if (connection === "open") {
-      wa.status = "connected";
-      wa.qr = undefined;
-      logger.info("WhatsApp connected");
+      setSession(userId, { status: "connected", qr: undefined });
+      logger.info("WhatsApp connected", { userId });
     }
     if (connection === "close") {
       const code = (lastDisconnect?.error as { output?: { statusCode?: number } })
         ?.output?.statusCode;
       const loggedOut = code === DisconnectReason.loggedOut;
-      wa.status = loggedOut ? "disconnected" : "waiting_qr";
-      wa.socket = null;
-      if (loggedOut) wa.qr = undefined;
-      logger.info("WhatsApp connection closed", { code, loggedOut });
+      setSession(userId, {
+        status: loggedOut ? "disconnected" : "waiting_qr",
+        socket: null,
+        qr: loggedOut ? undefined : getSession(userId).qr,
+      });
+      logger.info("WhatsApp connection closed", { userId, code, loggedOut });
       // Auto-reconnect unless explicitly logged out
-      if (!loggedOut) init().catch(() => {});
+      if (!loggedOut) {
+        setTimeout(() => init(userId).catch(() => {}), 3000);
+      }
     }
   });
 
-  // Route incoming messages to the auto-reply handler (individual contacts only)
+  // Route incoming messages to handlers (individual contacts only)
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify") return;
     for (const msg of messages) {
-      if (msg.key.fromMe) continue;
       const jid = msg.key.remoteJid ?? "";
       if (!isIndividualJid(jid)) continue;
+
       const text =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
         "";
-      if (text) await handleAutoReply(jid, text);
+      if (!text) continue;
+
+      const contactPhone = jid.replace("@s.whatsapp.net", "");
+      const sender = msg.key.fromMe ? "me" : "contact";
+
+      // Store message in AI chat history
+      storeMessage(userId, contactPhone, text, sender).catch(() => {});
+
+      // Handle auto-reply and AI for incoming messages (not from self)
+      if (!msg.key.fromMe) {
+        // Buffer rapid incoming messages before processing
+        const bufferKey = `${userId}_${contactPhone}`;
+        bufferIncomingMessage(bufferKey, text, async (combinedText) => {
+          await handleAutoReply(userId, jid, combinedText);
+        });
+      }
     }
   });
 
   sock.ev.on("creds.update", saveCreds);
 }
 
-/** Disconnect and reset state to idle. */
-export async function disconnect(): Promise<void> {
-  if (wa.socket) {
-    try { await wa.socket.logout(); } catch { wa.socket?.end(undefined); }
-    wa.socket = null;
+/** Disconnect a user's WhatsApp and reset state to idle. */
+export async function disconnect(userId: string): Promise<void> {
+  const session = getSession(userId);
+  if (session.socket) {
+    try { await session.socket.logout(); } catch { session.socket?.end(undefined); }
   }
-  wa.status = "idle";
-  wa.qr = undefined;
-  logger.info("WhatsApp disconnected");
+  removeSession(userId);
+  logger.info("WhatsApp disconnected", { userId });
 }
 
-/** Return current connection status and QR code (if in waiting_qr state). */
-export function getStatus() {
-  return { status: wa.status, qr: wa.qr };
+/** Return connection status and QR code for a specific user. */
+export function getStatus(userId: string) {
+  const session = getSession(userId);
+  return { status: session.status, qr: session.qr };
+}
+
+// ─── Auto-reconnect on server boot ────────────────────────────────────────────
+
+/**
+ * Scan wa-auth directories and auto-connect users who have stored credentials.
+ * Called once on server startup.
+ */
+export async function autoReconnectAll(): Promise<void> {
+  if (!existsSync(WA_AUTH_ROOT)) return;
+
+  const entries = readdirSync(WA_AUTH_ROOT, { withFileTypes: true });
+  const userDirs = entries.filter(
+    (e) => e.isDirectory() && existsSync(`${WA_AUTH_ROOT}/${e.name}/creds.json`)
+  );
+
+  logger.info(`Auto-reconnecting ${userDirs.length} WhatsApp session(s)`);
+
+  for (const dir of userDirs) {
+    const userId = dir.name;
+    try {
+      await init(userId);
+      logger.info("Auto-reconnected WhatsApp", { userId });
+    } catch (e) {
+      logger.error("Failed to auto-reconnect WhatsApp", { userId, error: String(e) });
+    }
+  }
 }

@@ -16,10 +16,14 @@ export interface Stats {
   templates: number;
 }
 
-/** Return dashboard statistics. */
-export async function getStats(): Promise<Stats> {
+/** Return dashboard statistics for a specific user. */
+export async function getStats(userId: string): Promise<Stats> {
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
+
+  const userFilter = userId
+    ? sql`AND ${messageLog.userId} = ${userId}`
+    : sql``;
 
   // Aggregate totals from message_log
   const [totals] = await db
@@ -29,7 +33,8 @@ export async function getStats(): Promise<Stats> {
       sentToday: sql<number>`SUM(CASE WHEN status='sent' AND createdAt >= ${startOfToday.getTime()} THEN 1 ELSE 0 END)`,
       failedToday: sql<number>`SUM(CASE WHEN status='failed' AND createdAt >= ${startOfToday.getTime()} THEN 1 ELSE 0 END)`,
     })
-    .from(messageLog);
+    .from(messageLog)
+    .where(eq(messageLog.userId, userId));
 
   // Last 7 days daily activity
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -38,7 +43,7 @@ export async function getStats(): Promise<Stats> {
   const recentLogs = await db
     .select({ status: messageLog.status, createdAt: messageLog.createdAt })
     .from(messageLog)
-    .where(gte(messageLog.createdAt, sevenDaysAgo))
+    .where(and(eq(messageLog.userId, userId), gte(messageLog.createdAt, sevenDaysAgo)))
     .all();
 
   // Group by day
@@ -64,15 +69,17 @@ export async function getStats(): Promise<Stats> {
   const [{ pending }] = await db
     .select({ pending: count() })
     .from(scheduledMessage)
-    .where(eq(scheduledMessage.status, "pending"));
+    .where(and(eq(scheduledMessage.status, "pending"), eq(scheduledMessage.userId, userId)));
 
   const [{ rules }] = await db
     .select({ rules: count() })
-    .from(autoReplyRule);
+    .from(autoReplyRule)
+    .where(eq(autoReplyRule.userId, userId));
 
   const [{ tpl }] = await db
     .select({ tpl: count() })
-    .from(template);
+    .from(template)
+    .where(eq(template.userId, userId));
 
   return {
     totalSent: totals?.totalSent ?? 0,

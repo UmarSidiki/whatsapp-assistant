@@ -6,14 +6,19 @@ import { aiRouter } from './routes/ai'
 import { logger } from './lib/logger'
 import inviteCodes from './config/invite-codes.json'
 import { restoreScheduledMessages } from './services/schedule.service'
+import { autoReconnectAll } from './services/connection.service'
 
 const app = new Hono()
 
 // Restore scheduled messages from DB on startup
 restoreScheduledMessages().catch(e => logger.error("Failed to restore scheduled messages", e))
 
+// Auto-reconnect all WhatsApp sessions from stored auth
+autoReconnectAll().catch(e => logger.error("Failed to auto-reconnect WhatsApp sessions", e))
+
+const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', 'https://assistant.itupdown.com'],
+  origin: ['http://localhost:5173', 'http://localhost:5174', frontendUrl],
   credentials: true,
 }))
 

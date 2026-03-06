@@ -581,17 +581,15 @@ export async function testConnection(c: Context) {
     }
 
     try {
-      const envKey = provider === "groq" ? process.env.GROQ_API_KEY : process.env.GEMINI_API_KEY;
-      // Also check DB keys
+      // DB keys only (per-account isolation)
       const dbKeys = await db
         .select({ keyValue: apiKeys.keyValue })
         .from(apiKeys)
         .where(eq(apiKeys.userId, userId));
       const keys = dbKeys.map((k) => k.keyValue);
-      if (envKey) keys.unshift(envKey);
 
       if (keys.length === 0 || !keys[0]) {
-        return { success: false, message: `No API keys configured for ${provider}` };
+        return { success: false, message: `No API keys configured for ${provider}. Add keys in settings.` };
       }
 
       return { success: true, message: `${provider} API key found and configured` };

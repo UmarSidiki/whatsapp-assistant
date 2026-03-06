@@ -57,6 +57,7 @@ export const verification = sqliteTable("verification", {
 /** Log of every message sent (single, bulk, scheduled, auto-reply) */
 export const messageLog = sqliteTable("message_log", {
   id: text("id").primaryKey(),
+  userId: text("userId").references(() => user.id),
   type: text("type", { enum: ["single", "bulk", "scheduled", "auto_reply"] }).notNull(),
   phone: text("phone").notNull(),
   message: text("message").notNull(),
@@ -66,11 +67,13 @@ export const messageLog = sqliteTable("message_log", {
 }, (t) => [
   index("message_log_created_at_idx").on(t.createdAt),
   index("message_log_status_idx").on(t.status),
+  index("message_log_user_idx").on(t.userId),
 ]);
 
 /** Persisted auto-reply rules (survive server restarts) */
 export const autoReplyRule = sqliteTable("auto_reply_rule", {
   id: text("id").primaryKey(),
+  userId: text("userId").references(() => user.id),
   keyword: text("keyword").notNull(),
   response: text("response").notNull(),
   matchType: text("matchType", { enum: ["exact", "contains", "startsWith"] })
@@ -79,26 +82,34 @@ export const autoReplyRule = sqliteTable("auto_reply_rule", {
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
-});
+}, (t) => [
+  index("auto_reply_rule_user_idx").on(t.userId),
+]);
 
 /** Persisted scheduled messages (survive server restarts) */
 export const scheduledMessage = sqliteTable("scheduled_message", {
   id: text("id").primaryKey(),
+  userId: text("userId").references(() => user.id),
   phone: text("phone").notNull(),
   message: text("message").notNull(),
   scheduledAt: integer("scheduledAt", { mode: "timestamp" }).notNull(),
   status: text("status", { enum: ["pending", "sent", "failed"] }).notNull().default("pending"),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
-});
+}, (t) => [
+  index("scheduled_message_user_idx").on(t.userId),
+]);
 
 /** Message templates (saved server-side, not just localStorage) */
 export const template = sqliteTable("template", {
   id: text("id").primaryKey(),
-  name: text("name").notNull().unique(),
+  userId: text("userId").references(() => user.id),
+  name: text("name").notNull(),
   content: text("content").notNull(),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
-});
+}, (t) => [
+  index("template_user_idx").on(t.userId),
+]);
 
 // ─── AI Assistant Tables ──────────────────────────────────────────────────────
 

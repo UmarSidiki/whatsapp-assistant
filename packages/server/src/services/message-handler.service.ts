@@ -269,11 +269,11 @@ export function getActiveMimicContacts(userId: string): string[] {
   const prefix = `${userId}_`;
   const contacts: string[] = [];
 
-  for (const [key, enabled] of mimicSettings) {
+  mimicSettings.forEach((enabled, key) => {
     if (key.startsWith(prefix) && enabled) {
       contacts.push(key.slice(prefix.length));
     }
-  }
+  });
 
   return contacts;
 }
