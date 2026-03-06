@@ -19,8 +19,8 @@ for arg in "$@"; do
   esac
 done
 
-# ── Ensure bun is available ────────────────────────────────────────────────────
-command -v bun >/dev/null 2>&1 || error "bun is not installed. Install from https://bun.sh"
+# ── Ensure npm is available ────────────────────────────────────────────────────
+command -v npm >/dev/null 2>&1 || error "npm is not installed. Please install Node.js/npm"
 
 # ── Working directory = repo root ─────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,15 +29,15 @@ info "Deploying from: $REPO_ROOT"
 
 # ── 1. Install dependencies ───────────────────────────────────────────────────
 info "Installing dependencies…"
-bun install --frozen-lockfile
+npm install
 
 # ── 2. Build web (frontend) ───────────────────────────────────────────────────
 if [ "$SKIP_BUILD" = false ]; then
   info "Building frontend…"
-  bun run --cwd packages/web build
+  (cd packages/web && npm run build)
 
   info "Building server…"
-  bun run --cwd packages/server build
+  (cd packages/server && npm run build)
 else
   warn "Skipping build (--skip-build)"
 fi
@@ -45,12 +45,12 @@ fi
 # ── 3. Run database migrations ────────────────────────────────────────────────
 if [ "$SKIP_MIGRATE" = false ]; then
   info "Running database migrations…"
-  bun run --cwd packages/server db:migrate
+  (cd packages/server && npm run db:migrate)
 else
   warn "Skipping migrations (--skip-migrate)"
 fi
 
 # ── 4. Done ───────────────────────────────────────────────────────────────────
 info "✅ Deployment complete!"
-info "Start the server with: bun run start"
-info "  or with PM2:          pm2 start 'bun run start' --name whatsapp-bot"
+info "Start the server with: npm run start"
+info "  or with PM2:          pm2 start 'npm run start' --name whatsapp-bot"

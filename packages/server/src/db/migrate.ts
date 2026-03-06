@@ -1,10 +1,10 @@
 /**
  * Standalone migration runner — runs all pending migrations against app.db
- * Usage: bun run src/db/migrate.ts
+ * Usage: npm run db:migrate
  */
-import { Database } from "bun:sqlite";
-import { drizzle } from "drizzle-orm/bun-sqlite";
-import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 
 const DB_PATH = process.env.DB_PATH ?? "./app.db";
 const MIGRATIONS_FOLDER = "./src/db/migrations";

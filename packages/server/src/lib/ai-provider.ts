@@ -83,10 +83,10 @@ export class GroqProvider implements AIProvider {
       let Groq;
       try {
         const module = await import("groq-sdk");
-        Groq = module.default || module.Groq;
+        Groq = module.default || module.Groq || module;
       } catch {
         throw new ProviderError(
-          "Groq SDK not installed. Install with: bun add groq-sdk",
+          "Groq SDK not installed. Install with: npm install groq-sdk",
           500
         );
       }
@@ -210,7 +210,7 @@ export class GeminiProvider implements AIProvider {
         GoogleGenerativeAI = module.GoogleGenerativeAI;
       } catch {
         throw new ProviderError(
-          "Google Generative AI SDK not installed. Install with: bun add @google/generative-ai",
+          "Google Generative AI SDK not installed. Install with: npm install @google/generative-ai",
           500
         );
       }

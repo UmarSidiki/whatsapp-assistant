@@ -53,12 +53,15 @@ app.get('/api/health', (c) => {
 })
 
 // Serve static frontend files
-import { serveStatic } from 'hono/bun'
+import { serveStatic } from '@hono/node-server/serve-static'
+import { serve } from '@hono/node-server'
 app.use('/*', serveStatic({ root: '../web/dist' }))
 app.use('*', serveStatic({ path: '../web/dist/index.html' })) // SPA fallback
 
-const port = process.env.PORT || 3000
-export default {
-  port,
+const port = Number(process.env.PORT || 3000)
+serve({
   fetch: app.fetch,
-}
+  port
+}, (info) => {
+  console.log(`Server is running on http://localhost:${info.port}`)
+})

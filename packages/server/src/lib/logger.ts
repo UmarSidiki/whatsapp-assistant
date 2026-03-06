@@ -1,4 +1,4 @@
-// Bun-native structured logger. Off by default — set LOG_ENABLED=true to enable.
+// Structured logger. Off by default — set LOG_ENABLED=true to enable.
 const enabled = process.env.LOG_ENABLED === "true";
 
 const fmt = (level: string, msg: string, data?: unknown) => {

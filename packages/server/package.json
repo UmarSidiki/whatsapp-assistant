@@ -1,24 +1,32 @@
 {
   "name": "server",
+  "version": "1.0.0",
+  "type": "module",
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
-    "build": "bun build src/index.ts --outdir=dist --target=bun --minify",
-    "start": "bun run dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "build": "echo \"(no build step; project uses tsx)\"",
+    "start": "tsx src/index.ts",
+    "ai-integration:test": "tsx ai-integration.test.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun run src/db/migrate.ts",
+    "db:migrate": "tsx src/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.5.3",
     "@google/generative-ai": "^0.24.1",
+    "@hono/node-server": "^1.19.9",
+    "@types/better-sqlite3": "^7.6.13",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "better-sqlite3": "^12.6.2",
+    "drizzle-orm": "^0.45.1",
     "groq-sdk": "^0.37.0",
     "hono": "^4.12.5",
     "pino": "^10.3.1"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "drizzle-kit": "^0.31.9"
+    "drizzle-kit": "^0.31.9",
+    "tsx": "^4.16.2",
+    "typescript": "^5.0.0"
   }
 }

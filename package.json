@@ -1,24 +1,21 @@
 {
   "name": "whatsapp-bot",
-  "module": "index.ts",
+  "private": true,
   "type": "module",
   "workspaces": [
     "packages/*"
   ],
-  "private": true,
   "scripts": {
-    "dev": "bash -c 'cd packages/web && bun run dev & cd packages/server && bun run dev'",
-    "build": "bash -c 'bun run --cwd packages/web build && bun run --cwd packages/server build'",
-    "start": "bun run --cwd packages/server start",
-    "db:generate": "bun run --cwd packages/server db:generate",
-    "db:migrate": "bun run --cwd packages/server db:migrate",
-    "db:studio": "bun run --cwd packages/server db:studio",
+    "dev": "concurrently \"npm run dev -w packages/web\" \"npm run dev -w packages/server\"",
+    "build": "npm run build -w packages/web && npm run build -w packages/server",
+    "start": "npm run start -w packages/server",
+    "db:generate": "npm run db:generate -w packages/server",
+    "db:migrate": "npm run db:migrate -w packages/server",
+    "db:studio": "npm run db:studio -w packages/server",
     "deploy": "bash scripts/deploy.sh"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "concurrently": "^8.2.2"
   },
-  "peerDependencies": {
-    "typescript": "^5"
-  }
+  "version": "1.0.0"
 }
