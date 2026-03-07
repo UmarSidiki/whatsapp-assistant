@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import makeWASocket, {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
@@ -11,7 +12,10 @@ import {
   getSession,
   setSession,
   removeSession,
+  extractTextFromMessage,
+  getContextInfoFromMessage,
   isIndividualJid,
+  jidToContactId,
   getSocketFor,
 } from "./wa-socket";
 import { handleAutoReply } from "./autoreply.service";
@@ -20,6 +24,7 @@ import { parseCommand, executeCommand, isMimicEnabledForContact } from "./messag
 import { generateResponse, generatePersonaAIDescription } from "./ai-response.service";
 import { getPersona, extractPersona, savePersona } from "./ai-persona.service";
 import { bufferIncomingMessage, sendSegmented, sendSegments } from "./segment.service";
+import { addScheduledMessage } from "./schedule.service";
 import { db } from "../db";
 import { aiSettings, messageLog } from "../db/schema";
 
@@ -34,6 +39,82 @@ function authDir(userId: string): string {
 // Track contacts whose history backfill has already been requested
 const backfilledContacts = new Set<string>();
 
+interface ParsedReminderIntent {
+  task: string;
+  scheduledAt: Date;
+}
+
+function parseReminderIntent(input: string, now: Date = new Date()): ParsedReminderIntent | null {
+  const trimmed = input.trim().replace(/\s+/g, " ");
+  const match = trimmed.match(/^remind me to\s+(.+?)\s+at\s+(.+)$/i);
+  if (!match) return null;
+
+  const task = (match[1] ?? "").trim().replace(/[.!?]+$/, "");
+  const timeText = (match[2] ?? "").trim().replace(/[.!?]+$/, "");
+  if (!task || !timeText) return null;
+
+  const scheduledAt = parseReminderDateTime(timeText, now);
+  if (!scheduledAt) return null;
+
+  return { task, scheduledAt };
+}
+
+function parseReminderDateTime(input: string, now: Date): Date | null {
+  const lowered = input.toLowerCase();
+  const hasTomorrow = /\btomorrow\b/.test(lowered);
+  const normalized = lowered.replace(/\btomorrow\b/g, "").trim();
+
+  const amPmMatch = normalized.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
+  if (amPmMatch) {
+    let hour = Number(amPmMatch[1]);
+    const minute = Number(amPmMatch[2] ?? "0");
+    const period = (amPmMatch[3] ?? "").toLowerCase();
+
+    if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
+    if (period === "pm" && hour !== 12) hour += 12;
+    if (period === "am" && hour === 12) hour = 0;
+
+    const target = new Date(now);
+    target.setSeconds(0, 0);
+    target.setHours(hour, minute, 0, 0);
+    if (hasTomorrow || target.getTime() <= now.getTime()) {
+      target.setDate(target.getDate() + 1);
+    }
+    return target;
+  }
+
+  const twentyFourMatch = normalized.match(/^(\d{1,2}):(\d{2})$/);
+  if (twentyFourMatch) {
+    const hour = Number(twentyFourMatch[1]);
+    const minute = Number(twentyFourMatch[2]);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+
+    const target = new Date(now);
+    target.setSeconds(0, 0);
+    target.setHours(hour, minute, 0, 0);
+    if (hasTomorrow || target.getTime() <= now.getTime()) {
+      target.setDate(target.getDate() + 1);
+    }
+    return target;
+  }
+
+  const parsed = Date.parse(input);
+  if (!Number.isNaN(parsed)) {
+    const target = new Date(parsed);
+    if (target.getTime() > now.getTime()) return target;
+  }
+
+  return null;
+}
+
+function formatReminderConfirmation(task: string, scheduledAt: Date): string {
+  return [
+    "⏰ Reminder scheduled",
+    `• Task: ${task}`,
+    `• Time: ${scheduledAt.toLocaleString()}`,
+  ].join("\n");
+}
+
 // ─── Connection ───────────────────────────────────────────────────────────────
 
 /** Initialize the WhatsApp socket for a specific user. */
@@ -47,6 +128,8 @@ export async function init(userId: string): Promise<void> {
 
   const { state, saveCreds } = await useMultiFileAuthState(authDir(userId));
   const { version } = await fetchLatestBaileysVersion();
+  
+  // Initialize session with proper merging to preserve status
   setSession(userId, { status: "waiting_qr", qr: undefined });
 
   const sock = makeWASocket({
@@ -58,7 +141,10 @@ export async function init(userId: string): Promise<void> {
     markOnlineOnConnect: false,
     browser: ["Ubuntu", "Chrome", "110.0.5481.77"],
   });
-  setSession(userId, { socket: sock });
+  
+  // Merge socket into existing session instead of overwriting
+  const currentSession = getSession(userId);
+  setSession(userId, { ...currentSession, socket: sock });
 
   sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
     if (qr) {
@@ -102,13 +188,10 @@ export async function init(userId: string): Promise<void> {
         const jid = msg.key?.remoteJid ?? "";
         if (!isIndividualJid(jid)) continue;
 
-        const text =
-          msg.message?.conversation ||
-          msg.message?.extendedTextMessage?.text ||
-          "";
+        const text = extractTextFromMessage(msg.message);
         if (!text) continue;
 
-        const contactPhone = jid.replace("@s.whatsapp.net", "");
+        const contactPhone = jidToContactId(jid);
         const sender = msg.key.fromMe ? "me" : "contact";
         const ts = msg.messageTimestamp
           ? new Date(Number(msg.messageTimestamp) * 1000)
@@ -135,13 +218,10 @@ export async function init(userId: string): Promise<void> {
       const jid = msg.key.remoteJid ?? "";
       if (!isIndividualJid(jid)) continue;
 
-      const text =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        "";
+      const text = extractTextFromMessage(msg.message);
       if (!text) continue;
 
-      const contactPhone = jid.replace("@s.whatsapp.net", "");
+      const contactPhone = jidToContactId(jid);
       const sender = msg.key.fromMe ? "me" : "contact";
 
       // Store every message (both history-append and real-time-notify)
@@ -164,13 +244,8 @@ export async function init(userId: string): Promise<void> {
       if (msg.key.fromMe) {
         // Handle own-message commands: !me, !mimic, !refresh, !ai status
         if (text.trim().startsWith("!")) {
-          // Extract replied-to message text so !me/!{name} can reference it even
-          // when the quoted message is not yet in the context database.
-          const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
-          const quotedText =
-            ctxInfo?.quotedMessage?.conversation ||
-            ctxInfo?.quotedMessage?.extendedTextMessage?.text ||
-            undefined;
+          const ctxInfo = getContextInfoFromMessage(msg.message);
+          const quotedText = extractTextFromMessage(ctxInfo?.quotedMessage) || undefined;
 
           handleOwnCommand(userId, jid, contactPhone, text, msg.key, quotedText).catch((e) =>
             logger.error("Own command handler failed", {
@@ -181,13 +256,25 @@ export async function init(userId: string): Promise<void> {
           );
         }
       } else {
+        const ctxInfo = getContextInfoFromMessage(msg.message);
+        const quotedText = extractTextFromMessage(ctxInfo?.quotedMessage) || undefined;
+        const isContactCommand = text.trim().startsWith("!");
+
+        if (isContactCommand) {
+          await handleAIResponse(userId, jid, contactPhone, text, {
+            quotedText,
+            forceCommand: true,
+          });
+          continue;
+        }
+
         // Buffer rapid incoming messages, then run the full AI flow
         const bufferKey = `${userId}_${contactPhone}`;
         bufferIncomingMessage(bufferKey, text, async (combinedText) => {
           // Auto-reply takes priority — skip AI if a rule matched
           const autoReplied = await handleAutoReply(userId, jid, combinedText);
           if (!autoReplied) {
-            await handleAIResponse(userId, jid, contactPhone, combinedText);
+            await handleAIResponse(userId, jid, contactPhone, combinedText, { quotedText });
           }
         });
       }
@@ -229,9 +316,12 @@ async function handleAIResponse(
   userId: string,
   jid: string,
   contactPhone: string,
-  text: string
+  text: string,
+  options?: { quotedText?: string; forceCommand?: boolean }
 ): Promise<void> {
   const tag = `[AI ${contactPhone}]`;
+  const quotedText = options?.quotedText;
+  const forceCommand = options?.forceCommand ?? false;
 
   try {
     // ── Step 1: Check AI settings ─────────────────────────────────────────
@@ -246,11 +336,6 @@ async function handleAIResponse(
     const aiEnabled = settingsRows[0]?.aiEnabled ?? false;
     const botName = settingsRows[0]?.botName?.trim();
 
-    if (!aiEnabled) {
-      logger.info(`${tag} AI is disabled globally, skipping`, { userId });
-      return;
-    }
-
     let aiMode: "mimic" | "bot" = "mimic";
     let promptText = text;
 
@@ -261,7 +346,17 @@ async function handleAIResponse(
          aiMode = "bot";
          promptText = botMatch[1];
          logger.info(`${tag} Bot explicitly invoked by contact`, { userId, botName });
-      }
+       }
+    }
+
+    if (forceCommand && aiMode !== "bot") {
+      logger.info(`${tag} Command-style message ignored (not bot command)`, { userId });
+      return;
+    }
+
+    if (!aiEnabled && aiMode !== "bot") {
+      logger.info(`${tag} AI is disabled globally, skipping`, { userId });
+      return;
     }
 
     // ── Check per-contact mimic toggle ────────────────────────────────────
@@ -269,6 +364,31 @@ async function handleAIResponse(
     // If contact explicitly invoked the bot, bypass the mimic check
     if (!isMimicEnabledForContact(userId, contactPhone) && aiMode !== "bot") {
       logger.info(`${tag} Mimic disabled for this contact, skipping`, { userId });
+      return;
+    }
+
+    if (aiMode === "bot" && quotedText) {
+      promptText = `Replied message: "${quotedText}"\n\nMy question: ${promptText}`;
+    }
+
+    const reminderIntent = aiMode === "bot" ? parseReminderIntent(promptText) : null;
+    if (reminderIntent) {
+      const scheduled = await addScheduledMessage(
+        userId,
+        jid,
+        `⏰ Reminder: ${reminderIntent.task}`,
+        reminderIntent.scheduledAt.toISOString()
+      );
+
+      await sendSegmented(
+        userId,
+        jid,
+        formatReminderConfirmation(
+          reminderIntent.task,
+          new Date(scheduled.scheduledAt)
+        )
+      );
+      logger.info(`${tag} Smart reminder created from bot command`, { userId });
       return;
     }
 
@@ -286,6 +406,7 @@ async function handleAIResponse(
         try {
           const sock = getSocketFor(userId);
           // fetchMessageHistory is fire-and-forget; results arrive via messages.upsert/append
+          // NOTE: This method may not exist in all Baileys versions - wrapped in try/catch
           await (sock as any).fetchMessageHistory(
             500,
             { remoteJid: jid, fromMe: false, id: "" },
@@ -452,6 +573,16 @@ async function handleOwnCommand(
   }
 
   const command = parseCommand(resolvedText);
+  
+  // Debug logging to trace command parsing issues
+  logger.info("[Command] Parsed result", { 
+    userId, 
+    originalText: text.substring(0, 50),
+    resolvedText: resolvedText.substring(0, 50),
+    commandType: command?.type || "null",
+    hasContent: !!command?.content
+  });
+  
   if (!command.type) {
     // Not a recognised command — restore the original text
     await editOwnMessage(userId, jid, msgKey, text);
@@ -460,8 +591,26 @@ async function handleOwnCommand(
 
   // ── AI explain commands (!me / !{botName}) ──────────────────────────────────
   if (command.type === "explain") {
-    await editOwnMessage(userId, jid, msgKey, "⏳ Generating...");
     try {
+      const reminderIntent = parseReminderIntent(command.content ?? "");
+      if (reminderIntent) {
+        const scheduled = await addScheduledMessage(
+          userId,
+          jid,
+          `⏰ Reminder: ${reminderIntent.task}`,
+          reminderIntent.scheduledAt.toISOString()
+        );
+        await editOwnMessage(
+          userId,
+          jid,
+          msgKey,
+          formatReminderConfirmation(reminderIntent.task, new Date(scheduled.scheduledAt))
+        );
+        return;
+      }
+
+      await editOwnMessage(userId, jid, msgKey, "⏳ Generating...");
+
       // Build the AI prompt content.
       // If the user replied to a message, prepend the quoted text so the AI can
       // reference it even when it is not in the stored conversation history.

@@ -1,5 +1,5 @@
 import { logger } from "../lib/logger";
-import { ServiceError, getSocketFor } from "./wa-socket";
+import { ServiceError, jidToContactId } from "./wa-socket";
 import { sendSegmented } from "./segment.service";
 import { db } from "../db";
 import { autoReplyRule, messageLog } from "../db/schema";
@@ -88,7 +88,7 @@ export async function handleAutoReply(userId: string, jid: string, text: string)
     if (matches) {
       try {
         await sendSegmented(userId, jid, rule.response);
-        const phone = jid.replace("@s.whatsapp.net", "");
+        const phone = jidToContactId(jid);
         await db.insert(messageLog).values({
           id: crypto.randomUUID(), userId, type: "auto_reply", phone,
           message: rule.response, status: "sent", createdAt: new Date(),

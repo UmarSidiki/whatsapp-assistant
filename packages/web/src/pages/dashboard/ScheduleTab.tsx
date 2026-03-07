@@ -27,6 +27,14 @@ interface Template {
   content: string;
 }
 
+function parseTemplatesPayload(data: unknown): Template[] {
+  if (Array.isArray(data)) return data as Template[];
+  if (data && typeof data === "object" && Array.isArray((data as { templates?: unknown[] }).templates)) {
+    return (data as { templates: Template[] }).templates;
+  }
+  return [];
+}
+
 const STATUS_VARIANTS: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   pending: "outline",
   sent: "default",
@@ -68,7 +76,7 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
     // Load saved templates
     fetch(`${apiUrl}/api/whatsapp/templates`, { credentials: "include" })
       .then((r) => r.json())
-      .then((data) => { if (data?.templates) setTemplates(data.templates); })
+      .then((data) => setTemplates(parseTemplatesPayload(data)))
       .catch(() => {});
     const interval = setInterval(load, 10_000);
     return () => clearInterval(interval);

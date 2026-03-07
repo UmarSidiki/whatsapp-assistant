@@ -101,7 +101,7 @@ function dispatchScheduled(userId: string, msg: ScheduledMessage): void {
       return;
     }
     try {
-      await sendSegmented(userId, toJid(msg.phone), msg.message);
+      await sendSegmented(userId, toScheduleTargetJid(msg.phone), msg.message);
       await db.update(scheduledMessage).set({ status: "sent" }).where(eq(scheduledMessage.id, msg.id));
       await logMessage(userId, "scheduled", msg.phone, msg.message, "sent");
       logger.info("Scheduled message sent", { userId, id: msg.id });
@@ -114,6 +114,14 @@ function dispatchScheduled(userId: string, msg: ScheduledMessage): void {
 
   if (delay <= 0) run();
   else timers.set(msg.id, setTimeout(run, delay));
+}
+
+function toScheduleTargetJid(target: string): string {
+  const trimmed = target.trim();
+  if (trimmed.includes("@")) {
+    return trimmed;
+  }
+  return toJid(trimmed);
 }
 
 async function logMessage(

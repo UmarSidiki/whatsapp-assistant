@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { template } from "../db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { ServiceError } from "./wa-socket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -18,6 +18,7 @@ export interface Template {
 export async function getTemplates(userId: string): Promise<Template[]> {
   const rows = await db.select().from(template)
     .where(eq(template.userId, userId))
+    .orderBy(desc(template.updatedAt))
     .all();
   return rows.map(r => ({
     id: r.id,
@@ -29,14 +30,37 @@ export async function getTemplates(userId: string): Promise<Template[]> {
 }
 
 export async function createTemplate(userId: string, name: string, content: string): Promise<Template> {
-  const existing = await db.select().from(template)
-    .where(and(eq(template.name, name), eq(template.userId, userId)))
-    .get();
-  if (existing) throw new ServiceError("A template with this name already exists", 409);
+  const normalizedName = name.trim();
+  const normalizedContent = content.trim();
+  if (!normalizedName || !normalizedContent) {
+    throw new ServiceError("Template name and content are required", 400);
+  }
+
+  const existing = await db.select({ name: template.name }).from(template)
+    .where(eq(template.userId, userId))
+    .all();
+  const duplicate = existing.some((row) =>
+    row.name.trim().toLowerCase() === normalizedName.toLowerCase()
+  );
+  if (duplicate) throw new ServiceError("A template with this name already exists", 409);
+
   const now = new Date();
   const id = crypto.randomUUID();
-  await db.insert(template).values({ id, userId, name, content, createdAt: now, updatedAt: now });
-  return { id, name, content, createdAt: now.toISOString(), updatedAt: now.toISOString() };
+  await db.insert(template).values({
+    id,
+    userId,
+    name: normalizedName,
+    content: normalizedContent,
+    createdAt: now,
+    updatedAt: now
+  });
+  return {
+    id,
+    name: normalizedName,
+    content: normalizedContent,
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString()
+  };
 }
 
 export async function deleteTemplate(userId: string, id: string): Promise<void> {

@@ -3,6 +3,7 @@ import { db } from "../db";
 import { aiPersona, aiChatHistory } from "../db/schema";
 import { getMessageHistory } from "./ai-assistant.service";
 import { logger } from "../lib/logger";
+import { normalizeContactId } from "./wa-socket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -471,9 +472,9 @@ export async function savePersona(
   persona: Persona
 ): Promise<void> {
   try {
-    const normalizedPhone = contactPhone.replace(/\D/g, "");
+    const normalizedPhone = normalizeContactId(contactPhone);
     if (!normalizedPhone) {
-      logger.warn("AI persona: Invalid phone number", { contactPhone });
+      logger.warn("AI persona: Invalid contact identifier", { contactPhone });
       return;
     }
 
@@ -537,7 +538,11 @@ export async function getPersona(
   contactPhone: string
 ): Promise<Persona | null> {
   try {
-    const normalizedPhone = contactPhone.replace(/\D/g, "");
+    const normalizedPhone = normalizeContactId(contactPhone);
+    if (!normalizedPhone) {
+      logger.warn("AI persona: Invalid contact identifier", { contactPhone });
+      return null;
+    }
 
     const result = await db
       .select()

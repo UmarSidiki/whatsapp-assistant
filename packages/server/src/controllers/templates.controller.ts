@@ -5,14 +5,16 @@ import * as templatesService from "../services/templates.service";
 
 export async function getTemplates(c: Context) {
   const userId = c.get("userId") as string;
-  return c.json(await templatesService.getTemplates(userId));
+  const templates = await templatesService.getTemplates(userId);
+  return c.json({ templates });
 }
 
 export async function createTemplate(c: Context) {
   return handle(c, async () => {
     const userId = c.get("userId") as string;
     const { name, content } = await c.req.json<{ name: string; content: string }>();
-    return templatesService.createTemplate(userId, name, content);
+    const template = await templatesService.createTemplate(userId, name, content);
+    return { template };
   }, 201);
 }
 

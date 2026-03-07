@@ -2,6 +2,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "../db";
 import { aiSettings, aiPersona } from "../db/schema";
 import { logger } from "../lib/logger";
+import { normalizeContactId } from "./wa-socket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,13 +59,20 @@ export function parseCommand(message: string): CommandResult {
   const trimmed = message.trim();
 
   // !me <message> - explain/answer mode
-  const meMatch = trimmed.match(/^!me\s+(.+)$/i);
+  // FIX: Changed regex to allow !me without requiring content (handles edge case)
+  // But still requires content for actual processing
+  const meMatch = trimmed.match(/^!me(?:\s+(.+))?$/i);
   if (meMatch) {
-    return {
-      type: "explain",
-      content: meMatch[1].trim(),
-      requiresResponse: true,
-    };
+    const content = meMatch[1]?.trim() || "";
+    // Only return explain type if there's actual content
+    if (content) {
+      return {
+        type: "explain",
+        content: content,
+        requiresResponse: true,
+      };
+    }
+    // If empty !me, treat as unknown command - will be restored to original text
   }
 
   // !mimic global on|off - toggle AI globally (before per-contact check)
@@ -176,7 +184,10 @@ export async function executeCommand(
  */
 async function refreshPersona(userId: string, contactPhone: string): Promise<string> {
   try {
-    const normalizedPhone = contactPhone.replace(/\D/g, "");
+    const normalizedPhone = normalizeContactId(contactPhone);
+    if (!normalizedPhone) {
+      return "❌ Invalid contact for persona refresh";
+    }
 
     // Delete existing persona to force refresh
     await db
@@ -216,27 +227,38 @@ async function getAIStatusMessage(userId: string): Promise<string> {
       .then((rows) => rows[0]);
 
     if (!settings) {
-      return "⚙️ AI Settings:\n- Status: Not configured\n- Primary Provider: Not set\n\n⚠️ Please configure AI settings in the dashboard.";
+      return [
+        "⚙️ AI Assistant Status",
+        "",
+        "• Status: Not configured",
+        "• Primary provider: Not set",
+        "",
+        "⚠️ Configure AI settings in the dashboard first.",
+      ].join("\n");
     }
 
     const status = settings.aiEnabled ? "✅ Enabled" : "❌ Disabled";
     const provider = settings.primaryProvider || "groq";
     const fallback = settings.fallbackProvider ? `${settings.fallbackProvider}` : "None";
-    const botCmd = (settings as any).botName ? `!${(settings as any).botName} <text>` : null;
+    const botCmd = settings.botName?.trim()
+      ? `• !${settings.botName.trim()} <text> — public AI assistant command for contacts`
+      : null;
 
-    return (
-      `⚙️ AI Settings:\n` +
-      `- Status: ${status}\n` +
-      `- Primary Provider: ${provider}\n` +
-      `- Fallback Provider: ${fallback}\n\n` +
-      `Commands:\n` +
-      `!me <text> - Ask AI for analysis/response (private, only you see this)\n` +
-      (botCmd ? `${botCmd} - Public AI assistant your contacts can use; also works as your private alias\n` : "") +
-      `!mimic on/off - Toggle auto-reply for this contact\n` +
-      `!mimic global on/off - Toggle AI for ALL contacts\n` +
-      `!refresh persona - Rebuild persona from chat history\n` +
-      `!ai status - Show this message`
-    );
+    return [
+      "⚙️ AI Assistant Status",
+      "",
+      `• Status: ${status}`,
+      `• Primary provider: ${provider}`,
+      `• Fallback provider: ${fallback}`,
+      "",
+      "📌 Commands",
+      "• !me <text> — private AI analysis/response",
+      ...(botCmd ? [botCmd] : []),
+      "• !mimic on/off — toggle auto-reply for this contact",
+      "• !mimic global on/off — toggle AI for all contacts",
+      "• !refresh persona — rebuild persona from chat history",
+      "• !ai status — show this status",
+    ].join("\n");
   } catch (error) {
     logger.error("Failed to get AI settings", {
       error: String(error),

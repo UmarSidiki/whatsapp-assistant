@@ -1,4 +1,16 @@
-import type { WASocket } from "@whiskeysockets/baileys";
+import {
+  type WASocket,
+  extractMessageContent,
+  isHostedLidUser,
+  isHostedPnUser,
+  isJidBroadcast,
+  isJidStatusBroadcast,
+  isLidUser,
+  isPnUser,
+  jidDecode,
+  normalizeMessageContent,
+  type proto,
+} from "@whiskeysockets/baileys";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -75,8 +87,61 @@ export function getAllSessions(): Map<string, WAState> {
 export const toJid = (phone: string) =>
   phone.replace(/\D/g, "") + "@s.whatsapp.net";
 
-/** Returns true only for individual contacts — not groups, status, or broadcasts. */
+/** Returns true only for individual contacts (PN/LID), not groups/status/broadcast. */
 export const isIndividualJid = (jid: string) =>
-  jid.endsWith("@s.whatsapp.net") &&
-  !jid.startsWith("status@") &&
-  !jid.startsWith("broadcast@");
+  !isJidStatusBroadcast(jid) &&
+  !isJidBroadcast(jid) &&
+  Boolean(isPnUser(jid) || isLidUser(jid) || isHostedPnUser(jid) || isHostedLidUser(jid));
+
+/** Extract stable contact identifier from any user JID (PN/LID/hosted). */
+export function jidToContactId(jid: string): string {
+  const user = jidDecode(jid)?.user;
+  if (user) return normalizeContactId(user);
+  return normalizeContactId(jid.split("@")[0] ?? jid);
+}
+
+/** Normalize contact identifiers from phone numbers, JIDs, PN, or LID values. */
+export function normalizeContactId(contactId: string): string {
+  const trimmed = contactId.trim();
+  if (!trimmed) return "";
+
+  const decodedUser = jidDecode(trimmed)?.user;
+  if (decodedUser) {
+    return decodedUser.toLowerCase();
+  }
+
+  const rawUser = trimmed.includes("@") ? (trimmed.split("@")[0] ?? "") : trimmed;
+  const digitsOnly = rawUser.replace(/\D/g, "");
+  return (digitsOnly || rawUser).toLowerCase();
+}
+
+/** Extract text from common WhatsApp message payload variants (incl. wrapped messages). */
+export function extractTextFromMessage(message?: proto.IMessage | null): string {
+  const content = extractMessageContent(message) ?? normalizeMessageContent(message);
+  if (!content) return "";
+  return (
+    content.conversation ||
+    content.extendedTextMessage?.text ||
+    content.imageMessage?.caption ||
+    content.videoMessage?.caption ||
+    content.documentMessage?.caption ||
+    content.buttonsResponseMessage?.selectedDisplayText ||
+    content.listResponseMessage?.title ||
+    content.templateButtonReplyMessage?.selectedDisplayText ||
+    ""
+  ).trim();
+}
+
+/** Read contextInfo from common message containers after normalizing wrappers. */
+export function getContextInfoFromMessage(
+  message?: proto.IMessage | null
+): proto.IContextInfo | undefined {
+  const content = extractMessageContent(message) ?? normalizeMessageContent(message);
+  return (
+    content?.extendedTextMessage?.contextInfo ||
+    content?.imageMessage?.contextInfo ||
+    content?.videoMessage?.contextInfo ||
+    content?.documentMessage?.contextInfo ||
+    undefined
+  );
+}

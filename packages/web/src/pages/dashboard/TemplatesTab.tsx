@@ -13,6 +13,14 @@ interface Template {
   createdAt: string;
 }
 
+function parseTemplatesPayload(data: unknown): Template[] {
+  if (Array.isArray(data)) return data as Template[];
+  if (data && typeof data === "object" && Array.isArray((data as { templates?: unknown[] }).templates)) {
+    return (data as { templates: Template[] }).templates;
+  }
+  return [];
+}
+
 export function TemplatesTab({ apiUrl }: { apiUrl: string }) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [name, setName] = useState("");
@@ -22,9 +30,9 @@ export function TemplatesTab({ apiUrl }: { apiUrl: string }) {
 
   useEffect(() => {
     fetch(`${apiUrl}/api/whatsapp/templates`, { credentials: "include" })
-      .then((r) => r.json())
-      .then((data) => { if (data?.templates) setTemplates(data.templates); })
-      .catch(() => {});
+      .then((res) => res.json())
+      .then((data) => setTemplates(parseTemplatesPayload(data)))
+      .catch(() => setError("Failed to load templates."));
   }, [apiUrl]);
 
   const handleSave = async () => {
@@ -40,8 +48,9 @@ export function TemplatesTab({ apiUrl }: { apiUrl: string }) {
         body: JSON.stringify({ name: name.trim(), content: content.trim() }),
       });
       const data = await res.json();
-      if (data?.template) {
-        setTemplates((prev) => [...prev, data.template]);
+      const template = data?.template ?? data;
+      if (res.ok && template?.id && template?.name) {
+        setTemplates((prev) => [template, ...prev.filter((t) => t.id !== template.id)]);
         setName(""); setContent("");
       } else {
         setError(data?.error ?? "Failed to save template.");
@@ -53,13 +62,18 @@ export function TemplatesTab({ apiUrl }: { apiUrl: string }) {
 
   const handleDelete = async (id: string) => {
     try {
-      await fetch(`${apiUrl}/api/whatsapp/templates/${id}`, {
+      const res = await fetch(`${apiUrl}/api/whatsapp/templates/${id}`, {
         method: "DELETE",
         credentials: "include",
       });
-      setTemplates((prev) => prev.filter(t => t.id !== id));
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data?.error ?? "Failed to delete template.");
+        return;
+      }
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
     } catch {
-      // silently ignore
+      setError("Failed to delete template.");
     }
   };
 

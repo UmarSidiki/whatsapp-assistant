@@ -35,6 +35,14 @@ interface Template {
   content: string;
 }
 
+function parseTemplatesPayload(data: unknown): Template[] {
+  if (Array.isArray(data)) return data as Template[];
+  if (data && typeof data === "object" && Array.isArray((data as { templates?: unknown[] }).templates)) {
+    return (data as { templates: Template[] }).templates;
+  }
+  return [];
+}
+
 function parseContacts(raw: string): BulkContact[] {
   return raw
     .split("\n")
@@ -76,7 +84,7 @@ export function BulkMessagesTab({ apiUrl }: { apiUrl: string }) {
     // Load saved templates
     fetch(`${apiUrl}/api/whatsapp/templates`, { credentials: "include" })
       .then((r) => r.json())
-      .then((data) => { if (data?.templates) setTemplates(data.templates); })
+      .then((data) => setTemplates(parseTemplatesPayload(data)))
       .catch(() => {});
     return stopPolling;
   // eslint-disable-next-line react-hooks/exhaustive-deps

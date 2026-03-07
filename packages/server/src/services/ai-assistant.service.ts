@@ -2,6 +2,7 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { db } from "../db";
 import { aiChatHistory } from "../db/schema";
 import { logger } from "../lib/logger";
+import { normalizeContactId } from "./wa-socket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,10 +28,10 @@ export async function storeMessage(
     return;
   }
 
-  // Normalize phone number (remove non-digits)
-  const normalizedPhone = contactPhone.replace(/\D/g, "");
+  // Normalize phone/LID identifier for stable storage
+  const normalizedPhone = normalizeContactId(contactPhone);
   if (!normalizedPhone) {
-    logger.warn("AI assistant: Invalid phone number", { contactPhone });
+    logger.warn("AI assistant: Invalid contact identifier", { contactPhone });
     return;
   }
 
@@ -63,7 +64,7 @@ export async function getMessageHistory(
   contactPhone: string,
   limit_n: number = 50
 ): Promise<MessageHistoryItem[]> {
-  const normalizedPhone = contactPhone.replace(/\D/g, "");
+  const normalizedPhone = normalizeContactId(contactPhone);
 
   try {
     const messages = await db
@@ -101,7 +102,7 @@ export async function getMessageCount(
   userId: string,
   contactPhone: string
 ): Promise<number> {
-  const normalizedPhone = contactPhone.replace(/\D/g, "");
+  const normalizedPhone = normalizeContactId(contactPhone);
 
   try {
     const result = await db
