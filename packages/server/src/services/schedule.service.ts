@@ -1,7 +1,7 @@
 import { logger } from "../lib/logger";
 import { toJid, ServiceError } from "./wa-socket";
 import { sendSegmented } from "./segment.service";
-import { getSession } from "./wa-socket";
+import { getSessionIfExists } from "./wa-socket";
 import { db } from "../db";
 import { scheduledMessage, messageLog } from "../db/schema";
 import { eq, and } from "drizzle-orm";
@@ -93,8 +93,8 @@ function dispatchScheduled(userId: string, msg: ScheduledMessage): void {
 
   const run = async () => {
     timers.delete(msg.id);
-    const session = getSession(userId);
-    if (!session.socket || session.status !== "connected") {
+    const session = getSessionIfExists(userId);
+    if (!session?.socket || session.status !== "connected") {
       await db.update(scheduledMessage).set({ status: "failed" }).where(eq(scheduledMessage.id, msg.id));
       await logMessage(userId, "scheduled", msg.phone, msg.message, "failed", "Not connected");
       logger.warn("Scheduled message failed — not connected", { userId, id: msg.id });

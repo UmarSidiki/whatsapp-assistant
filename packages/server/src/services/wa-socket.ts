@@ -51,6 +51,11 @@ export function getSession(userId: string): WAState {
   return state;
 }
 
+/** Read a user's session only if it already exists (no implicit creation). */
+export function getSessionIfExists(userId: string): WAState | undefined {
+  return sessions.get(userId);
+}
+
 /** Merge partial updates into a user's session state. */
 export function setSession(userId: string, patch: Partial<WAState>): void {
   const state = getSession(userId);

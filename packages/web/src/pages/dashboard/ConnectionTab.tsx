@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import QRCode from "react-qr-code";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,37 +30,72 @@ export function ConnectionTab({ apiUrl }: { apiUrl: string }) {
   const [quickMessage, setQuickMessage] = useState("");
   const [sendFeedback, setSendFeedback] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollFailuresRef = useRef(0);
 
-  const stopPolling = () => {
+  const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  };
-  useEffect(() => stopPolling, []);
+    pollFailuresRef.current = 0;
+  }, []);
 
-  const startPolling = (url: string) => {
+  const startPolling = useCallback((url: string) => {
     stopPolling();
     pollRef.current = setInterval(async () => {
       try {
         const res = await fetch(`${url}/api/whatsapp/status`, { credentials: "include" });
         const data = await res.json();
+        pollFailuresRef.current = 0;
         setStatus(data.status);
         setQr(data.qr);
-        if (data.status === "connected" || data.status === "idle") stopPolling();
-      } catch { /* keep polling */ }
+        if (data.status === "connected" || data.status === "idle" || data.status === "disconnected") {
+          stopPolling();
+        }
+      } catch {
+        pollFailuresRef.current += 1;
+        if (pollFailuresRef.current >= 5) {
+          stopPolling();
+        }
+      }
     }, 3000);
-  };
+  }, [stopPolling]);
+
+  useEffect(() => {
+    const syncStatus = async () => {
+      try {
+        const res = await fetch(`${apiUrl}/api/whatsapp/status`, { credentials: "include" });
+        const data = await res.json();
+        setStatus(data.status);
+        setQr(data.qr);
+        if (data.status === "waiting_qr") {
+          startPolling(apiUrl);
+        }
+      } catch {
+        // Keep local defaults if initial status request fails.
+      }
+    };
+
+    syncStatus();
+    return stopPolling;
+  }, [apiUrl, startPolling, stopPolling]);
 
   const handleConnect = async () => {
-    setConnecting(true);
-    await fetch(`${apiUrl}/api/whatsapp/init`, { method: "POST", credentials: "include" });
-    setStatus("waiting_qr");
-    startPolling(apiUrl);
-    setConnecting(false);
+    try {
+      setConnecting(true);
+      const res = await fetch(`${apiUrl}/api/whatsapp/init`, { method: "POST", credentials: "include" });
+      if (!res.ok) {
+        setStatus("disconnected");
+        return;
+      }
+      setStatus("waiting_qr");
+      startPolling(apiUrl);
+    } finally {
+      setConnecting(false);
+    }
   };
 
   const handleDisconnect = async () => {
     stopPolling();
     await fetch(`${apiUrl}/api/whatsapp/disconnect`, { method: "POST", credentials: "include" });
-    setStatus("idle");
+    setStatus("disconnected");
     setQr(undefined);
   };
 

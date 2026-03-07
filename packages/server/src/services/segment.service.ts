@@ -212,3 +212,16 @@ export function bufferIncomingMessage(
     }
   }, quietPeriodMs);
 }
+
+/** Clear buffered message timers for a user to prevent stale timers after disconnect. */
+export function clearBufferedMessagesForUser(userId: string): void {
+  const prefix = `${userId}_`;
+  const keysToDelete: string[] = [];
+  incomingBuffers.forEach((buffer, key) => {
+    if (key.startsWith(prefix)) {
+      clearTimeout(buffer.timer);
+      keysToDelete.push(key);
+    }
+  });
+  keysToDelete.forEach((key) => incomingBuffers.delete(key));
+}

@@ -45,6 +45,18 @@ export function setMimicEnabledForContact(
   mimicSettings.set(getMimicKey(userId, contactPhone), enabled);
 }
 
+/** Clear cached per-contact mimic overrides for a user (disconnect/unlink cleanup). */
+export function clearMimicSettingsForUser(userId: string): void {
+  const prefix = `${userId}_`;
+  const keysToDelete: string[] = [];
+  mimicSettings.forEach((_, key) => {
+    if (key.startsWith(prefix)) {
+      keysToDelete.push(key);
+    }
+  });
+  keysToDelete.forEach((key) => mimicSettings.delete(key));
+}
+
 // ─── Command Parsing ──────────────────────────────────────────────────────────
 
 /**

@@ -31,6 +31,8 @@ export interface BulkSendParams {
 // ─── State (per-user) ─────────────────────────────────────────────────────────
 
 const bulkJobs = new Map<string, BulkJob>();
+const bulkCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const BULK_JOB_RETENTION_MS = 10 * 60 * 1000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +43,26 @@ const rand = (min: number, max: number) =>
 const interpolate = (tpl: string, vars: Record<string, string>) =>
   tpl.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
 
+function clearBulkCleanupTimer(userId: string): void {
+  const timer = bulkCleanupTimers.get(userId);
+  if (!timer) return;
+  clearTimeout(timer);
+  bulkCleanupTimers.delete(userId);
+}
+
+function scheduleBulkJobCleanup(userId: string): void {
+  clearBulkCleanupTimer(userId);
+  const timer = setTimeout(() => {
+    const job = bulkJobs.get(userId);
+    if (job && !job.running) {
+      bulkJobs.delete(userId);
+    }
+    bulkCleanupTimers.delete(userId);
+  }, BULK_JOB_RETENTION_MS);
+  timer.unref?.();
+  bulkCleanupTimers.set(userId, timer);
+}
+
 // ─── Bulk send ────────────────────────────────────────────────────────────────
 
 /** Start sending messages to all contacts. Runs in the background. */
@@ -49,36 +71,43 @@ export async function startBulkSend(params: BulkSendParams): Promise<void> {
   requireConnectedFor(userId);
   if (bulkJobs.get(userId)?.running) throw new ServiceError("A bulk job is already running", 409);
 
+  clearBulkCleanupTimer(userId);
   const job: BulkJob = { total: contacts.length, sent: 0, failed: 0, running: true, errors: [] };
   bulkJobs.set(userId, job);
 
   (async () => {
-    for (const contact of contacts) {
-      if (!job.running) break;
-      const text = interpolate(messageTemplate, contact);
-      const jid = toJid(contact.phone);
-      try {
-        await sendSegmented(userId, jid, text);
-        await db.insert(messageLog).values({
-          id: crypto.randomUUID(), userId, type: "bulk", phone: contact.phone,
-          message: text, status: "sent", createdAt: new Date(),
-        });
-        job.sent++;
-        logger.info("Bulk sent", { userId, phone: contact.phone });
-      } catch (e) {
-        await db.insert(messageLog).values({
-          id: crypto.randomUUID(), userId, type: "bulk", phone: contact.phone,
-          message: text, status: "failed", error: String(e), createdAt: new Date(),
-        });
-        job.failed++;
-        job.errors.push({ phone: contact.phone, error: String(e) });
-        logger.error("Bulk failed", { userId, phone: contact.phone, error: String(e) });
+    try {
+      for (const contact of contacts) {
+        if (!job.running) break;
+        const text = interpolate(messageTemplate, contact);
+        const jid = toJid(contact.phone);
+        try {
+          await sendSegmented(userId, jid, text);
+          await db.insert(messageLog).values({
+            id: crypto.randomUUID(), userId, type: "bulk", phone: contact.phone,
+            message: text, status: "sent", createdAt: new Date(),
+          });
+          job.sent++;
+          logger.info("Bulk sent", { userId, phone: contact.phone });
+        } catch (e) {
+          await db.insert(messageLog).values({
+            id: crypto.randomUUID(), userId, type: "bulk", phone: contact.phone,
+            message: text, status: "failed", error: String(e), createdAt: new Date(),
+          });
+          job.failed++;
+          job.errors.push({ phone: contact.phone, error: String(e) });
+          logger.error("Bulk failed", { userId, phone: contact.phone, error: String(e) });
+        }
+        if (antiBan && job.running) await sleep(rand(minDelay, maxDelay));
       }
-      if (antiBan && job.running) await sleep(rand(minDelay, maxDelay));
+    } finally {
+      job.running = false;
+      scheduleBulkJobCleanup(userId);
+      logger.info("Bulk send complete", { userId, sent: job.sent, failed: job.failed });
     }
-    job.running = false;
-    logger.info("Bulk send complete", { userId, sent: job.sent, failed: job.failed });
-  })();
+  })().catch((error) => {
+    logger.error("Bulk send worker crashed", { userId, error: String(error) });
+  });
 }
 
 export function getBulkStatus(userId: string): BulkJob {
@@ -87,5 +116,7 @@ export function getBulkStatus(userId: string): BulkJob {
 
 export function stopBulk(userId: string): void {
   const job = bulkJobs.get(userId);
-  if (job) job.running = false;
+  if (!job) return;
+  job.running = false;
+  scheduleBulkJobCleanup(userId);
 }

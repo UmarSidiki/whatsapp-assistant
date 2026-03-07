@@ -12,6 +12,12 @@ export interface MessageHistoryItem {
   timestamp: Date;
 }
 
+const MAX_MESSAGES_PER_CONTACT = 500;
+
+interface StoreMessageOptions {
+  skipTrim?: boolean;
+}
+
 // ─── Storage ──────────────────────────────────────────────────────────────────
 
 /**
@@ -22,7 +28,8 @@ export async function storeMessage(
   contactPhone: string,
   message: string,
   sender: "me" | "contact",
-  timestamp?: Date
+  timestamp?: Date,
+  options?: StoreMessageOptions
 ): Promise<void> {
   if (!contactPhone || !message.trim()) {
     return;
@@ -51,7 +58,41 @@ export async function storeMessage(
       userId,
       contactPhone,
     });
+    return;
   }
+
+  if (!options?.skipTrim) {
+    try {
+      await trimMessageHistoryForContact(userId, normalizedPhone);
+    } catch (e) {
+      logger.warn("AI assistant: Failed to trim message history", {
+        error: String(e),
+        userId,
+        contactPhone: normalizedPhone,
+      });
+    }
+  }
+}
+
+/**
+ * Keep only the newest MAX_MESSAGES_PER_CONTACT messages for one user-contact pair.
+ */
+export async function trimMessageHistoryForContact(
+  userId: string,
+  contactPhone: string
+): Promise<void> {
+  await db.delete(aiChatHistory).where(sql`
+    ${aiChatHistory.userId} = ${userId}
+    AND ${aiChatHistory.contactPhone} = ${contactPhone}
+    AND ${aiChatHistory.id} IN (
+      SELECT id
+      FROM ai_chat_history
+      WHERE userId = ${userId}
+        AND contactPhone = ${contactPhone}
+      ORDER BY timestamp DESC, id DESC
+      LIMIT -1 OFFSET ${MAX_MESSAGES_PER_CONTACT}
+    )
+  `);
 }
 
 // ─── Retrieval ────────────────────────────────────────────────────────────────
@@ -169,56 +210,13 @@ export async function syncOldMessages(userId: string): Promise<number> {
  * Cleanup old messages - keep only last 500 per contact
  */
 export async function cleanupOldMessages(userId: string): Promise<void> {
-  const MAX_MESSAGES_PER_CONTACT = 500;
-
   try {
     // Get all contacts for this user
     const contacts = await getContacts(userId);
 
     for (const contactPhone of contacts) {
       try {
-        // Count total messages for this contact
-        const countResult = await db
-          .select({ count: sql<number>`COUNT(*)` })
-          .from(aiChatHistory)
-          .where(
-            and(
-              eq(aiChatHistory.userId, userId),
-              eq(aiChatHistory.contactPhone, contactPhone)
-            )
-          );
-
-        const totalCount = countResult[0]?.count || 0;
-
-        if (totalCount > MAX_MESSAGES_PER_CONTACT) {
-          // Get oldest messages to delete
-          const messagesToDelete = await db
-            .select({ id: aiChatHistory.id })
-            .from(aiChatHistory)
-            .where(
-              and(
-                eq(aiChatHistory.userId, userId),
-                eq(aiChatHistory.contactPhone, contactPhone)
-              )
-            )
-            .orderBy(aiChatHistory.timestamp)
-            .limit(totalCount - MAX_MESSAGES_PER_CONTACT);
-
-          const idsToDelete = messagesToDelete.map((m) => m.id);
-
-          // Delete old messages
-          if (idsToDelete.length > 0) {
-            await db
-              .delete(aiChatHistory)
-              .where(sql`${aiChatHistory.id} IN (${sql.join(idsToDelete)})`);
-
-            logger.info("AI assistant: Cleaned up old messages", {
-              userId,
-              contactPhone,
-              deletedCount: idsToDelete.length,
-            });
-          }
-        }
+        await trimMessageHistoryForContact(userId, contactPhone);
       } catch (e) {
         logger.warn("AI assistant: Failed to cleanup messages for contact", {
           error: String(e),
