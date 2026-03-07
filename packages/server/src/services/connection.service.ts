@@ -1,8 +1,12 @@
 import crypto from "crypto";
 import makeWASocket, {
+  downloadMediaMessage,
+  extractMessageContent,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   DisconnectReason,
+  normalizeMessageContent,
+  type proto,
   type WASocket,
 } from "@whiskeysockets/baileys";
 import pino from "pino";
@@ -19,6 +23,7 @@ import {
   isIndividualJid,
   jidToContactId,
   getSocketFor,
+  toJid,
 } from "./wa-socket";
 import { handleAutoReply } from "./autoreply.service";
 import {
@@ -32,6 +37,7 @@ import {
   executeCommand,
   isMimicEnabledForContact,
   clearMimicSettingsForUser,
+  type CommandResult,
 } from "./message-handler.service";
 import { generateResponse, generatePersonaAIDescription } from "./ai-response.service";
 import { getPersona, extractPersona, savePersona } from "./ai-persona.service";
@@ -61,6 +67,7 @@ const explicitDisconnects = new Set<string>();
 const BACKFILL_TTL_MS = 6 * 60 * 60 * 1000;
 const BACKFILL_MAX_ENTRIES = 4000;
 const BACKFILL_TARGET_MESSAGES = 500;
+const MEDIA_DOWNLOAD_COMMAND_LOGGER = pino({ level: "silent" });
 
 function isCurrentSocket(userId: string, socket: WASocket): boolean {
   return getSessionIfExists(userId)?.socket === socket;
@@ -174,8 +181,29 @@ interface ParsedReminderIntent {
   scheduledAt: Date;
 }
 
+interface OwnCommandContext {
+  quotedText?: string;
+  quotedMessage?: proto.IMessage | null;
+  quotedStanzaId?: string | null;
+  quotedParticipant?: string | null;
+  quotedRemoteJid?: string | null;
+}
+
+interface QuotedMediaDescriptor {
+  kind: "image" | "video" | "audio" | "document" | "sticker";
+  caption?: string;
+  mimetype?: string;
+  fileName?: string;
+  ptt?: boolean;
+}
+
 function parseReminderIntent(input: string, now: Date = new Date()): ParsedReminderIntent | null {
   const trimmed = input.trim().replace(/\s+/g, " ");
+  const standardizedIntent = parseStandardizedReminderIntent(trimmed, now);
+  if (standardizedIntent) {
+    return standardizedIntent;
+  }
+
   const relativeIntent = parseRelativeReminderIntent(trimmed, now);
   if (relativeIntent) {
     return relativeIntent;
@@ -192,6 +220,25 @@ function parseReminderIntent(input: string, now: Date = new Date()): ParsedRemin
   if (!scheduledAt) return null;
 
   return { task, scheduledAt };
+}
+
+function parseStandardizedReminderIntent(input: string, now: Date): ParsedReminderIntent | null {
+  const standardMatch = input.match(
+    /^-?r\s*-\s*(.+?)\s*-\s*-?(\d+)\s*(seconds?|secs?|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|day|d|din|ghanta|ghante)\.?$/i
+  );
+  if (!standardMatch) {
+    return null;
+  }
+
+  const task = normalizeReminderTask(standardMatch[1] ?? "");
+  const amount = Number(standardMatch[2] ?? "");
+  const unitMs = parseReminderUnitMs((standardMatch[3] ?? "").toLowerCase());
+
+  if (!task || !Number.isFinite(amount) || amount <= 0 || !unitMs) {
+    return null;
+  }
+
+  return { task, scheduledAt: new Date(now.getTime() + amount * unitMs) };
 }
 
 function parseRelativeReminderIntent(input: string, now: Date): ParsedReminderIntent | null {
@@ -338,6 +385,167 @@ function formatReminderConfirmation(task: string, scheduledAt: Date): string {
     `• Task: ${task}`,
     `• Time: ${scheduledAt.toLocaleString()}`,
   ].join("\n");
+}
+
+function getQuotedMediaDescriptor(quotedMessage?: proto.IMessage | null): QuotedMediaDescriptor | null {
+  const content = extractMessageContent(quotedMessage) ?? normalizeMessageContent(quotedMessage);
+  if (!content) return null;
+
+  if (content.imageMessage) {
+    return {
+      kind: "image",
+      caption: content.imageMessage.caption ?? undefined,
+      mimetype: content.imageMessage.mimetype ?? undefined,
+    };
+  }
+
+  if (content.videoMessage) {
+    return {
+      kind: "video",
+      caption: content.videoMessage.caption ?? undefined,
+      mimetype: content.videoMessage.mimetype ?? undefined,
+    };
+  }
+
+  if (content.audioMessage) {
+    return {
+      kind: "audio",
+      mimetype: content.audioMessage.mimetype ?? undefined,
+      ptt: content.audioMessage.ptt ?? undefined,
+    };
+  }
+
+  if (content.documentMessage) {
+    return {
+      kind: "document",
+      caption: content.documentMessage.caption ?? undefined,
+      mimetype: content.documentMessage.mimetype ?? undefined,
+      fileName: content.documentMessage.fileName ?? undefined,
+    };
+  }
+
+  if (content.stickerMessage) {
+    return { kind: "sticker" };
+  }
+
+  return null;
+}
+
+function buildMediaResendPayload(
+  mediaBuffer: Buffer,
+  descriptor: QuotedMediaDescriptor
+): Record<string, unknown> {
+  switch (descriptor.kind) {
+    case "image":
+      return {
+        image: mediaBuffer,
+        caption: descriptor.caption,
+        mimetype: descriptor.mimetype,
+      };
+
+    case "video":
+      return {
+        video: mediaBuffer,
+        caption: descriptor.caption,
+        mimetype: descriptor.mimetype,
+      };
+
+    case "audio":
+      return {
+        audio: mediaBuffer,
+        mimetype: descriptor.mimetype,
+        ptt: descriptor.ptt ?? false,
+      };
+
+    case "document":
+      return {
+        document: mediaBuffer,
+        caption: descriptor.caption,
+        mimetype: descriptor.mimetype,
+        fileName: descriptor.fileName || "downloaded-media",
+      };
+
+    case "sticker":
+      return { sticker: mediaBuffer };
+  }
+
+  const exhaustiveCheck: never = descriptor.kind;
+  throw new Error(`Unsupported media type: ${exhaustiveCheck}`);
+}
+
+function resolveMediaDownloadTargetJid(jid: string, command: CommandResult): string {
+  if (command.data?.target === "here") {
+    return jid;
+  }
+
+  if (command.data?.target === "number") {
+    const raw = String(command.data.number ?? "").trim();
+    if (!raw) {
+      throw new Error("Missing target number. Use !me -d -n {number}.");
+    }
+
+    if (raw.includes("@")) {
+      return raw;
+    }
+
+    const digits = raw.replace(/\D/g, "");
+    if (!digits) {
+      throw new Error("Invalid target number. Use digits only.");
+    }
+
+    return toJid(digits);
+  }
+
+  throw new Error("Invalid target. Use !me -d -here or !me -d -n {number}.");
+}
+
+async function sendQuotedMediaCopy(
+  userId: string,
+  jid: string,
+  command: CommandResult,
+  commandContext?: OwnCommandContext
+): Promise<string> {
+  const quotedMessage = commandContext?.quotedMessage;
+  if (!quotedMessage) {
+    throw new Error("Reply to a once-view media message first.");
+  }
+
+  const descriptor = getQuotedMediaDescriptor(quotedMessage);
+  if (!descriptor) {
+    throw new Error("The replied message has no downloadable media.");
+  }
+
+  const sourceForDownload = {
+    key: {
+      id: commandContext?.quotedStanzaId ?? undefined,
+      remoteJid: commandContext?.quotedRemoteJid || jid,
+      participant: commandContext?.quotedParticipant ?? undefined,
+      fromMe: false,
+    },
+    message: quotedMessage,
+  } as any;
+
+  const sock = getSocketFor(userId);
+  const mediaBuffer = await downloadMediaMessage(
+    sourceForDownload,
+    "buffer",
+    {},
+    {
+      logger: MEDIA_DOWNLOAD_COMMAND_LOGGER as any,
+      reuploadRequest: sock.updateMediaMessage,
+    }
+  );
+
+  const targetJid = resolveMediaDownloadTargetJid(jid, command);
+  const payload = buildMediaResendPayload(mediaBuffer, descriptor);
+  await sock.sendMessage(targetJid, payload as any);
+
+  if (targetJid === jid) {
+    return "✅ Media copied to this chat.";
+  }
+
+  const targetLabel = targetJid.includes("@") ? targetJid.split("@")[0] : targetJid;
+  return `✅ Media sent to ${targetLabel}.`;
 }
 
 // ─── Connection ───────────────────────────────────────────────────────────────
@@ -535,9 +743,15 @@ export async function init(userId: string): Promise<void> {
           // Handle own-message commands: !me, !mimic, !refresh, !ai status
           if (text.trim().startsWith("!")) {
             const ctxInfo = getContextInfoFromMessage(msg.message);
-            const quotedText = extractTextFromMessage(ctxInfo?.quotedMessage) || undefined;
+            const commandContext: OwnCommandContext = {
+              quotedText: extractTextFromMessage(ctxInfo?.quotedMessage) || undefined,
+              quotedMessage: ctxInfo?.quotedMessage,
+              quotedStanzaId: ctxInfo?.stanzaId,
+              quotedParticipant: ctxInfo?.participant,
+              quotedRemoteJid: ctxInfo?.remoteJid,
+            };
 
-            handleOwnCommand(userId, jid, contactPhone, text, msg.key, quotedText).catch((e) =>
+            handleOwnCommand(userId, jid, contactPhone, text, msg.key, commandContext).catch((e) =>
               logger.error("Own command handler failed", {
                 userId,
                 jid,
@@ -853,14 +1067,17 @@ async function editOwnMessage(
 }
 
 /**
- * Handle own-message (fromMe) commands: !me, !{botName}, !mimic, !refresh, !ai status.
+ * Handle own-message (fromMe) commands: !me, !{botName}, !mimic, !refresh, !ai status, !me -d.
  *
  * Flow for ALL commands:
  *   1. Immediately edits the sent command message to "⏳ Processing..."
- *   2. AI commands (!me / !{botName}):
+ *   2. Download commands (!me -d ...):
+ *        - Edits to "⏳ Downloading media..." while downloading
+ *        - Edits to success/error text after resend
+ *   3. AI commands (!me / !{botName}):
  *        - Edits to "⏳ Generating..." while waiting for the AI
  *        - Edits to "✅" once done, then sends the AI reply as new messages
- *   3. Settings commands (!mimic, !ai status, !refresh):
+ *   4. Settings commands (!mimic, !ai status, !refresh):
  *        - Edits directly to the result text
  *
  * NOTE: These commands ALWAYS run regardless of whether the global AI mimic is
@@ -877,10 +1094,11 @@ async function handleOwnCommand(
   contactPhone: string,
   text: string,
   msgKey: { remoteJid?: string | null; fromMe?: boolean | null; id?: string | null },
-  quotedText?: string
+  commandContext?: OwnCommandContext
 ): Promise<void> {
   // Immediately show a processing indicator in the sent message
   await editOwnMessage(userId, jid, msgKey, "⏳ Processing...");
+  const quotedText = commandContext?.quotedText;
 
   let resolvedText = text;
 
@@ -917,6 +1135,19 @@ async function handleOwnCommand(
   if (!command.type) {
     // Not a recognised command — restore the original text
     await editOwnMessage(userId, jid, msgKey, text);
+    return;
+  }
+
+  // ── Media download command (!me -d ...) ──────────────────────────────────────
+  if (command.type === "download_media") {
+    try {
+      await editOwnMessage(userId, jid, msgKey, "⏳ Downloading media...");
+      const resultMessage = await sendQuotedMediaCopy(userId, jid, command, commandContext);
+      await editOwnMessage(userId, jid, msgKey, resultMessage);
+    } catch (e) {
+      logger.error("[Command] Media download failed", { userId, contactPhone, error: String(e) });
+      await editOwnMessage(userId, jid, msgKey, `❌ ${String((e as Error)?.message || e)}`);
+    }
     return;
   }
 

@@ -41,14 +41,20 @@ const STATUS_VARIANTS: Record<string, "default" | "secondary" | "destructive" | 
   failed: "destructive",
 };
 
-function localToISO(local: string) {
-  return new Date(local).toISOString();
+function localToISO(local: string, timezoneOffset: number = 0) {
+  // Parse the local datetime string (format: YYYY-MM-DDTHH:mm)
+  const date = new Date(local);
+  // Adjust for timezone offset (timezoneOffset is in minutes, positive for ahead of UTC)
+  const adjusted = new Date(date.getTime() - timezoneOffset * 60000);
+  return adjusted.toISOString();
 }
 
-function isoToLocal(iso: string) {
+function isoToLocal(iso: string, timezoneOffset: number = 0) {
   const d = new Date(iso);
+  // Adjust for timezone offset to show local time
+  const adjusted = new Date(d.getTime() + timezoneOffset * 60000);
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${adjusted.getUTCFullYear()}-${pad(adjusted.getUTCMonth() + 1)}-${pad(adjusted.getUTCDate())}T${pad(adjusted.getUTCHours())}:${pad(adjusted.getUTCMinutes())}`;
 }
 
 function minDateTime() {
@@ -64,6 +70,7 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [timezoneOffset, setTimezoneOffset] = useState(0);
 
   const load = async () => {
     const res = await fetch(`${apiUrl}/api/whatsapp/schedule`, { credentials: "include" });
@@ -78,6 +85,19 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
       .then((r) => r.json())
       .then((data) => setTemplates(parseTemplatesPayload(data)))
       .catch(() => {});
+
+    // Load timezone from AI settings
+    fetch(`${apiUrl}/api/ai/settings`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.timezone) {
+          // Timezone is stored as offset string like "+05:30" or "-08:00"
+          const offset = parseFloat(data.timezone) * 60;
+          setTimezoneOffset(offset);
+        }
+      })
+      .catch(() => {});
+
     const interval = setInterval(load, 10_000);
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -91,7 +111,7 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ phone, message, scheduledAt: localToISO(scheduledAt) }),
+      body: JSON.stringify({ phone, message, scheduledAt: localToISO(scheduledAt, timezoneOffset) }),
     });
     setLoading(false);
     if (!res.ok) {
@@ -112,6 +132,34 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
 
   return (
     <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>📋 Reminder Standard</CardTitle>
+          <CardDescription>Quick reference for using the reminder system</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <div>
+            <p className="font-medium mb-2">Send Reminders via WhatsApp Commands:</p>
+            <ul className="space-y-2 ml-4 list-disc text-muted-foreground">
+              <li><code className="bg-muted px-2 py-1 rounded">remind me to [task] in [time] [unit]</code></li>
+              <p className="text-xs mt-1">Example: "remind me to call John in 5 minutes"</p>
+              <li><code className="bg-muted px-2 py-1 rounded">remind me to [task] at [time]</code></li>
+              <p className="text-xs mt-1">Example: "remind me to pay bill at 3pm" or "remind me to call at 15:30"</p>
+              <li><code className="bg-muted px-2 py-1 rounded">[time] [unit] baad [task] yaad dilaana</code> (Hindi)</li>
+              <p className="text-xs mt-1">Example: "5 minute baad mujhe lights band karne ki yaad dilaana"</p>
+            </ul>
+          </div>
+          <div>
+            <p className="font-medium mb-2">Supported Time Units:</p>
+            <p className="text-muted-foreground">seconds, minutes, hours, days (or s, m, h, d)</p>
+          </div>
+          <div>
+            <p className="font-medium mb-2">Dashboard Method:</p>
+            <p className="text-muted-foreground">Use the form below to schedule messages for specific dates and times.</p>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Schedule a Message</CardTitle>

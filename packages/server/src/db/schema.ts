@@ -159,6 +159,7 @@ export const aiSettings = sqliteTable("ai_settings", {
   geminiModel: text("geminiModel").notNull().default("gemini-2.0-flash"),
   botName: text("botName"),
   customInstructions: text("customInstructions"),
+  timezone: text("timezone").default("UTC"),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
 });

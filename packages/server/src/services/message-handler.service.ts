@@ -7,7 +7,7 @@ import { normalizeContactId } from "./wa-socket";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface CommandResult {
-  type: "explain" | "mimic" | "global_mimic" | "refresh" | "status" | null;
+  type: "explain" | "mimic" | "global_mimic" | "refresh" | "status" | "download_media" | null;
   content?: string; // for !me, the text to explain
   requiresResponse?: boolean;
   data?: any;
@@ -63,12 +63,33 @@ export function clearMimicSettingsForUser(userId: string): void {
  * Parse message for special commands
  * Supports:
  * - !me <message>          → Explain/answer mode
+ * - !me -r - task -5 min   → Standardized reminder syntax
  * - !mimic on/off          → Toggle persona mimicry
  * - !refresh persona       → Force update persona
  * - !ai status             → Show AI settings
  */
 export function parseCommand(message: string): CommandResult {
   const trimmed = message.trim();
+
+  // !me -d -here - download view-once media and send it in the same chat
+  const downloadHereMatch = trimmed.match(/^!me\s+-d\s+-here$/i);
+  if (downloadHereMatch) {
+    return {
+      type: "download_media",
+      data: { target: "here" },
+      requiresResponse: true,
+    };
+  }
+
+  // !me -d -n {number} - download view-once media and send to specified number
+  const downloadNumberMatch = trimmed.match(/^!me\s+-d\s+-n\s+(\S+)$/i);
+  if (downloadNumberMatch) {
+    return {
+      type: "download_media",
+      data: { target: "number", number: downloadNumberMatch[1] },
+      requiresResponse: true,
+    };
+  }
 
   // !me <message> - explain/answer mode
   // FIX: Changed regex to allow !me without requiring content (handles edge case)
@@ -265,7 +286,10 @@ async function getAIStatusMessage(userId: string): Promise<string> {
       "",
       "📌 Commands",
       "• !me <text> — private AI analysis/response",
+      "• !me -r - {task} -{time} {unit} — schedule reminder (e.g. -5 minutes)",
       ...(botCmd ? [botCmd] : []),
+      "• !me -d -here — save view-once media to this chat",
+      "• !me -d -n {number} — save view-once media to a number",
       "• !mimic on/off — toggle auto-reply for this contact",
       "• !mimic global on/off — toggle AI for all contacts",
       "• !refresh persona — rebuild persona from chat history",

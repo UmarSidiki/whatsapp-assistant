@@ -154,7 +154,7 @@ export async function updateSettings(c: Context) {
     }
 
     const body = await c.req.json();
-    const { aiEnabled, primaryProvider, fallbackProvider, groqModel, fallbackGroqModel, geminiModel, botName, customInstructions } = body;
+    const { aiEnabled, primaryProvider, fallbackProvider, groqModel, fallbackGroqModel, geminiModel, botName, customInstructions, timezone } = body;
 
     // Validate input
     if (aiEnabled !== undefined && typeof aiEnabled !== "boolean") {
@@ -189,6 +189,9 @@ export async function updateSettings(c: Context) {
     if (customInstructions !== undefined && customInstructions !== null && typeof customInstructions !== "string") {
       throw new ProviderError("Invalid customInstructions: must be string or null", 400);
     }
+    if (timezone !== undefined && timezone !== null && typeof timezone !== "string") {
+      throw new ProviderError("Invalid timezone: must be string or null", 400);
+    }
 
     try {
       const now = new Date();
@@ -212,6 +215,7 @@ export async function updateSettings(c: Context) {
           geminiModel: geminiModel ?? "gemini-2.0-flash",
           botName: botName ?? null,
           customInstructions: customInstructions ?? null,
+          timezone: timezone ?? "UTC",
           createdAt: now,
           updatedAt: now,
         });
@@ -224,6 +228,7 @@ export async function updateSettings(c: Context) {
           geminiModel: geminiModel ?? "gemini-2.0-flash",
           botName: botName ?? null,
           customInstructions: customInstructions ?? null,
+          timezone: timezone ?? "UTC",
         };
       } else {
         // Update existing settings
@@ -236,6 +241,7 @@ export async function updateSettings(c: Context) {
         if (geminiModel !== undefined) updateData.geminiModel = geminiModel;
         if (botName !== undefined) updateData.botName = botName;
         if (customInstructions !== undefined) updateData.customInstructions = customInstructions;
+        if (timezone !== undefined) updateData.timezone = timezone;
 
         await db.update(aiSettings).set(updateData).where(eq(aiSettings.userId, userId)).run();
 

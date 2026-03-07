@@ -41,6 +41,7 @@ interface AISettings {
   geminiModel?: string;
   botName?: string;
   customInstructions?: string;
+  timezone?: string;
 }
 
 interface ApiKey {
@@ -76,6 +77,29 @@ interface APITestResult {
 }
 
 const CUSTOM_MODEL_VALUE = "__custom__";
+
+// Common timezone options (offset in hours)
+const TIMEZONES = [
+  { id: "UTC", name: "UTC (±00:00)", offset: 0 },
+  { id: "GMT+1", name: "GMT+1 (Central European)", offset: 1 },
+  { id: "GMT+2", name: "GMT+2 (Eastern European)", offset: 2 },
+  { id: "GMT+3", name: "GMT+3 (Moscow, East Africa)", offset: 3 },
+  { id: "GMT+3.5", name: "GMT+3:30 (Iran)", offset: 3.5 },
+  { id: "GMT+4", name: "GMT+4 (Dubai, Caucasus)", offset: 4 },
+  { id: "GMT+4.5", name: "GMT+4:30 (Afghanistan)", offset: 4.5 },
+  { id: "GMT+5", name: "GMT+5 (Pakistan)", offset: 5 },
+  { id: "GMT+5.5", name: "GMT+5:30 (India, Sri Lanka)", offset: 5.5 },
+  { id: "GMT+6", name: "GMT+6 (Bangladesh)", offset: 6 },
+  { id: "GMT+7", name: "GMT+7 (Thailand, Vietnam)", offset: 7 },
+  { id: "GMT+8", name: "GMT+8 (China, Singapore)", offset: 8 },
+  { id: "GMT+9", name: "GMT+9 (Japan, Korea)", offset: 9 },
+  { id: "GMT+10", name: "GMT+10 (Australia East)", offset: 10 },
+  { id: "GMT-5", name: "GMT-5 (Eastern)", offset: -5 },
+  { id: "GMT-6", name: "GMT-6 (Central)", offset: -6 },
+  { id: "GMT-7", name: "GMT-7 (Mountain)", offset: -7 },
+  { id: "GMT-8", name: "GMT-8 (Pacific)", offset: -8 },
+  { id: "GMT-9", name: "GMT-9 (Alaska)", offset: -9 },
+];
 
 // Chat-capable Groq models (excludes guard/safety classifiers and speech models)
 const GROQ_MODELS = [
@@ -123,6 +147,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     fallbackProvider: "gemini",
     botName: "",
     customInstructions: "",
+    timezone: "UTC",
   });
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -234,6 +259,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
           geminiModel,
           botName: data.botName ?? "",
           customInstructions: data.customInstructions ?? "",
+          timezone: data.timezone ?? "UTC",
         });
         setSettingsError("");
       }
@@ -322,6 +348,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
           : settings.geminiModel,
         botName: settings.botName || null,
         customInstructions: settings.customInstructions || null,
+        timezone: settings.timezone || "UTC",
       };
 
       const res = await fetch(`${apiUrl}/api/ai/settings`, {
@@ -1060,6 +1087,30 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
               Sets a public command name, e.g.{" "}
               <code className="bg-muted px-1 rounded">!alex</code>. Your contacts can use this to interact with the AI.{" "}
               <code className="bg-muted px-1 rounded">!me</code> is always available for your own private usage.
+            </p>
+          </div>
+
+          {/* Custom Instructions */}
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-sm font-medium">
+              Timezone
+            </label>
+            <Select value={settings.timezone || "UTC"} onValueChange={(value) =>
+              setSettings({ ...settings, timezone: value })
+            }>
+              <SelectTrigger>
+                <SelectValue placeholder="Select timezone" />
+              </SelectTrigger>
+              <SelectContent>
+                {TIMEZONES.map((tz) => (
+                  <SelectItem key={tz.id} value={tz.id}>
+                    {tz.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Used for scheduling messages and displaying reminders in your local time.
             </p>
           </div>
 
