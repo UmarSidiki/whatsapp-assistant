@@ -20,6 +20,7 @@ import {
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
   Clock,
   RotateCcw,
   Eye,
@@ -177,6 +178,10 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
   const [historyData, setHistoryData] = useState<
     Array<{ sender: string; timestamp: string; message: string }>
   >([]);
+
+  // Collapsible section state
+  const [personaSectionOpen, setPersonaSectionOpen] = useState(true);
+  const [perContactSectionOpen, setPerContactSectionOpen] = useState(true);
 
   // API Key management state - Groq
   const [groqApiKeys, setGroqApiKeys] = useState<ApiKey[]>([]);
@@ -1254,167 +1259,192 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
 
       {/* Persona Management */}
       <Card>
-        <CardHeader>
+        <CardHeader
+          className="cursor-pointer select-none"
+          onClick={() => setPersonaSectionOpen((o) => !o)}
+        >
           <CardTitle className="flex items-center justify-between">
             <span>Persona Management</span>
-            <Button
-              onClick={handleRefreshAllPersonas}
-              variant="outline"
-              size="sm"
-              className="gap-2"
-            >
-              <RotateCcw className="h-4 w-4" />
-              Refresh All
-            </Button>
+            <div className="flex items-center gap-2">
+              {personaSectionOpen && (
+                <Button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRefreshAllPersonas();
+                  }}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Refresh All
+                </Button>
+              )}
+              <ChevronDown
+                className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${personaSectionOpen ? "rotate-180" : ""}`}
+              />
+            </div>
           </CardTitle>
           <CardDescription>
             Manage AI personas for all active contacts
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          {contacts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No active contacts yet
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {contacts.map((contact) => (
-                <div
-                  key={contact.id}
-                  className="flex items-center justify-between rounded-lg border p-4"
-                >
-                  <div className="flex-1">
-                    <p className="font-medium">{contact.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {contact.phone}
-                    </p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <span
-                        className={`text-xs font-medium ${getPersonaStatusColor(
-                          contact.personaLastRefresh,
-                        )}`}
-                      >
-                        Last refresh: {formatDate(contact.personaLastRefresh)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={() => handleViewPersona(contact.phone)}
-                      variant="outline"
-                      size="sm"
-                      className="gap-1"
-                    >
-                      <Eye className="h-4 w-4" />
-                      View
-                    </Button>
-                    <Button
-                      onClick={() => handleRefreshPersona(contact.phone)}
-                      variant="outline"
-                      size="sm"
-                      className="gap-1"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      Refresh
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Per-Contact Controls */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Per-Contact Settings</CardTitle>
-          <CardDescription>
-            Control AI features for individual contacts
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {contacts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No active contacts yet
-            </p>
-          ) : (
-            <div className="space-y-4">
-              {contacts.map((contact) => (
-                <div
-                  key={contact.id}
-                  className="rounded-lg border p-4 space-y-4"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
+        {personaSectionOpen && (
+          <CardContent>
+            {contacts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No active contacts yet
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {contacts.map((contact) => (
+                  <div
+                    key={contact.id}
+                    className="flex items-center justify-between rounded-lg border p-4"
+                  >
+                    <div className="flex-1">
                       <p className="font-medium">{contact.name}</p>
                       <p className="text-sm text-muted-foreground">
                         {contact.phone}
                       </p>
-                    </div>
-                    <Badge
-                      variant={
-                        contact.status === "error" ? "destructive" : "secondary"
-                      }
-                    >
-                      {contact.messageCount} messages
-                    </Badge>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {contact.mimicMode ? (
-                        <Eye className="h-4 w-4 text-blue-600" />
-                      ) : (
-                        <EyeOff className="h-4 w-4 text-gray-400" />
-                      )}
-                      <div>
-                        <p className="text-sm font-medium">Mimic Mode</p>
-                        <p className="text-xs text-muted-foreground">
-                          {contact.mimicMode
-                            ? "AI is mimicking user style"
-                            : "AI mimic mode is off"}
-                        </p>
+                      <div className="mt-2 flex items-center gap-2">
+                        <span
+                          className={`text-xs font-medium ${getPersonaStatusColor(
+                            contact.personaLastRefresh,
+                          )}`}
+                        >
+                          Last refresh: {formatDate(contact.personaLastRefresh)}
+                        </span>
                       </div>
                     </div>
-                    <Switch
-                      checked={contact.mimicMode}
-                      onCheckedChange={(enabled) =>
-                        handleToggleMimicMode(contact.phone, enabled)
-                      }
-                    />
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => handleViewPersona(contact.phone)}
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                      >
+                        <Eye className="h-4 w-4" />
+                        View
+                      </Button>
+                      <Button
+                        onClick={() => handleRefreshPersona(contact.phone)}
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        Refresh
+                      </Button>
+                    </div>
                   </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        )}
+      </Card>
 
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={() => handleViewPersona(contact.phone)}
-                      variant="outline"
-                      size="sm"
-                      className="gap-1 flex-1"
-                    >
-                      <Eye className="h-4 w-4" />
-                      View Persona
-                    </Button>
-                    <Button
-                      onClick={() => handleViewHistory(contact.phone)}
-                      variant="outline"
-                      size="sm"
-                      className="gap-1 flex-1"
-                    >
-                      History
-                    </Button>
+      {/* Per-Contact Controls */}
+      <Card>
+        <CardHeader
+          className="cursor-pointer select-none"
+          onClick={() => setPerContactSectionOpen((o) => !o)}
+        >
+          <CardTitle className="flex items-center justify-between">
+            <span>Per-Contact Settings</span>
+            <ChevronDown
+              className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${perContactSectionOpen ? "rotate-180" : ""}`}
+            />
+          </CardTitle>
+          <CardDescription>
+            Control AI features for individual contacts
+          </CardDescription>
+        </CardHeader>
+        {perContactSectionOpen && (
+          <CardContent>
+            {contacts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No active contacts yet
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {contacts.map((contact) => (
+                  <div
+                    key={contact.id}
+                    className="rounded-lg border p-4 space-y-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium">{contact.name}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {contact.phone}
+                        </p>
+                      </div>
+                      <Badge
+                        variant={
+                          contact.status === "error" ? "destructive" : "secondary"
+                        }
+                      >
+                        {contact.messageCount} messages
+                      </Badge>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {contact.mimicMode ? (
+                          <Eye className="h-4 w-4 text-blue-600" />
+                        ) : (
+                          <EyeOff className="h-4 w-4 text-gray-400" />
+                        )}
+                        <div>
+                          <p className="text-sm font-medium">Mimic Mode</p>
+                          <p className="text-xs text-muted-foreground">
+                            {contact.mimicMode
+                              ? "AI is mimicking user style"
+                              : "AI mimic mode is off"}
+                          </p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={contact.mimicMode}
+                        onCheckedChange={(enabled) =>
+                          handleToggleMimicMode(contact.phone, enabled)
+                        }
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => handleViewPersona(contact.phone)}
+                        variant="outline"
+                        size="sm"
+                        className="gap-1 flex-1"
+                      >
+                        <Eye className="h-4 w-4" />
+                        View Persona
+                      </Button>
+                      <Button
+                        onClick={() => handleViewHistory(contact.phone)}
+                        variant="outline"
+                        size="sm"
+                        className="gap-1 flex-1"
+                      >
+                        History
+                      </Button>
+                    </div>
+
+                    {contact.lastMessageDate && (
+                      <p className="text-xs text-muted-foreground">
+                        Last message: {formatDate(contact.lastMessageDate)}
+                      </p>
+                    )}
                   </div>
-
-                  {contact.lastMessageDate && (
-                    <p className="text-xs text-muted-foreground">
-                      Last message: {formatDate(contact.lastMessageDate)}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        )}
       </Card>
 
       {/* Commands Reference */}
