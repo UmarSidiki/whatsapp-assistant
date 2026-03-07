@@ -71,8 +71,9 @@ export async function deleteAutoReplyRule(userId: string, id: string): Promise<v
 /**
  * Called by the connection service for every incoming individual message.
  * Sends a reply (segmented) if the message matches the first enabled rule.
+ * Returns true if a rule matched and a reply was sent, false otherwise.
  */
-export async function handleAutoReply(userId: string, jid: string, text: string): Promise<void> {
+export async function handleAutoReply(userId: string, jid: string, text: string): Promise<boolean> {
   const rules = await getAutoReplyRules(userId);
   const t = text.toLowerCase();
 
@@ -96,7 +97,9 @@ export async function handleAutoReply(userId: string, jid: string, text: string)
       } catch (e) {
         logger.error("Auto-reply failed", { userId, jid, error: String(e) });
       }
-      break; // first matching rule wins
+      return true; // first matching rule wins
     }
   }
+
+  return false;
 }

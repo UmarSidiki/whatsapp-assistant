@@ -1,6 +1,12 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
@@ -11,7 +17,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { AlertCircle, CheckCircle2, Clock, RotateCcw, Eye, EyeOff, Zap, Plus, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  RotateCcw,
+  Eye,
+  EyeOff,
+  Zap,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
 type Provider = "groq" | "gemini";
 type ContactStatus = "ready" | "mimicking" | "error";
@@ -23,6 +39,8 @@ interface AISettings {
   groqModel?: string;
   fallbackGroqModel?: string;
   geminiModel?: string;
+  botName?: string;
+  customInstructions?: string;
 }
 
 interface ApiKey {
@@ -65,9 +83,18 @@ const GROQ_MODELS = [
   { id: "llama-3.1-70b-versatile", name: "Llama 3.1 70B (Versatile)" },
   { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B (Versatile)" },
   { id: "llama-guard-4-12b", name: "Llama Guard 4 12B" },
-  { id: "meta-llama/llama-4-maverick-17b-128e-instruct", name: "Llama 4 Maverick 17B" },
-  { id: "meta-llama/llama-4-scout-17b-16e-instruct", name: "Llama 4 Scout 17B" },
-  { id: "meta-llama/llama-prompt-guard-2-86m", name: "Llama Prompt Guard 2 86M" },
+  {
+    id: "meta-llama/llama-4-maverick-17b-128e-instruct",
+    name: "Llama 4 Maverick 17B",
+  },
+  {
+    id: "meta-llama/llama-4-scout-17b-16e-instruct",
+    name: "Llama 4 Scout 17B",
+  },
+  {
+    id: "meta-llama/llama-prompt-guard-2-86m",
+    name: "Llama Prompt Guard 2 86M",
+  },
   { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B 32K (Default)" },
   { id: "groq/compound", name: "Groq Compound" },
   { id: "groq/compound-mini", name: "Groq Compound Mini" },
@@ -101,6 +128,8 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     enabled: false,
     primaryProvider: "groq",
     fallbackProvider: "gemini",
+    botName: "",
+    customInstructions: "",
   });
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -122,9 +151,14 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
 
   // Modals state
   const [personaModalOpen, setPersonaModalOpen] = useState(false);
-  const [personaData, setPersonaData] = useState<string>("");
+  const [personaData, setPersonaData] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
-  const [historyData, setHistoryData] = useState<Array<{ sender: string; timestamp: string; content: string }>>([]);
+  const [historyData, setHistoryData] = useState<
+    Array<{ sender: string; timestamp: string; message: string }>
+  >([]);
 
   // API Key management state - Groq
   const [groqApiKeys, setGroqApiKeys] = useState<ApiKey[]>([]);
@@ -147,7 +181,8 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
   const [customFallbackGroqModel, setCustomFallbackGroqModel] = useState("");
   const [customGeminiModel, setCustomGeminiModel] = useState("");
   const [useCustomGroqModel, setUseCustomGroqModel] = useState(false);
-  const [useCustomFallbackGroqModel, setUseCustomFallbackGroqModel] = useState(false);
+  const [useCustomFallbackGroqModel, setUseCustomFallbackGroqModel] =
+    useState(false);
   const [useCustomGeminiModel, setUseCustomGeminiModel] = useState(false);
 
   // Load initial data
@@ -173,17 +208,29 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
       if (res.ok) {
         const data = await res.json();
         const groqModel = data.groqModel || "llama-3.1-8b-instant";
-        const fallbackGroqModel = data.fallbackGroqModel || "llama-3.1-70b-versatile";
+        const fallbackGroqModel =
+          data.fallbackGroqModel || "llama-3.1-70b-versatile";
         const geminiModel = data.geminiModel || "gemini-2.0-flash";
 
         // Detect custom models (not in predefined lists)
         const isCustomGroq = !GROQ_MODELS.some((m) => m.id === groqModel);
-        const isCustomFallbackGroq = !GROQ_MODELS.some((m) => m.id === fallbackGroqModel);
+        const isCustomFallbackGroq = !GROQ_MODELS.some(
+          (m) => m.id === fallbackGroqModel,
+        );
         const isCustomGemini = !GEMINI_MODELS.some((m) => m.id === geminiModel);
 
-        if (isCustomGroq) { setUseCustomGroqModel(true); setCustomGroqModel(groqModel); }
-        if (isCustomFallbackGroq) { setUseCustomFallbackGroqModel(true); setCustomFallbackGroqModel(fallbackGroqModel); }
-        if (isCustomGemini) { setUseCustomGeminiModel(true); setCustomGeminiModel(geminiModel); }
+        if (isCustomGroq) {
+          setUseCustomGroqModel(true);
+          setCustomGroqModel(groqModel);
+        }
+        if (isCustomFallbackGroq) {
+          setUseCustomFallbackGroqModel(true);
+          setCustomFallbackGroqModel(fallbackGroqModel);
+        }
+        if (isCustomGemini) {
+          setUseCustomGeminiModel(true);
+          setCustomGeminiModel(geminiModel);
+        }
 
         setSettings({
           enabled: data.aiEnabled ?? false,
@@ -192,6 +239,8 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
           groqModel,
           fallbackGroqModel,
           geminiModel,
+          botName: data.botName ?? "",
+          customInstructions: data.customInstructions ?? "",
         });
         setSettingsError("");
       }
@@ -272,8 +321,14 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
         primaryProvider: settings.primaryProvider,
         fallbackProvider: settings.fallbackProvider,
         groqModel: useCustomGroqModel ? customGroqModel : settings.groqModel,
-        fallbackGroqModel: useCustomFallbackGroqModel ? customFallbackGroqModel : settings.fallbackGroqModel,
-        geminiModel: useCustomGeminiModel ? customGeminiModel : settings.geminiModel,
+        fallbackGroqModel: useCustomFallbackGroqModel
+          ? customFallbackGroqModel
+          : settings.fallbackGroqModel,
+        geminiModel: useCustomGeminiModel
+          ? customGeminiModel
+          : settings.geminiModel,
+        botName: settings.botName || null,
+        customInstructions: settings.customInstructions || null,
       };
 
       const res = await fetch(`${apiUrl}/api/ai/settings`, {
@@ -317,7 +372,9 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
         success: res.ok,
         timestamp: new Date().toLocaleString(),
         provider,
-        message: data.message || (res.ok ? "Connection successful" : "Connection failed"),
+        message:
+          data.message ||
+          (res.ok ? "Connection successful" : "Connection failed"),
       });
     } catch (err) {
       setTestResult({
@@ -336,7 +393,8 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     const key = provider === "groq" ? newGroqKey : newGeminiKey;
     const name = provider === "groq" ? newGroqKeyName : newGeminiKeyName;
     const setError = provider === "groq" ? setGroqKeyError : setGeminiKeyError;
-    const setSaving = provider === "groq" ? setGroqKeySaving : setGeminiKeySaving;
+    const setSaving =
+      provider === "groq" ? setGroqKeySaving : setGeminiKeySaving;
 
     if (!key.trim()) {
       setError("API key cannot be empty");
@@ -385,10 +443,13 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     const setError = provider === "groq" ? setGroqKeyError : setGeminiKeyError;
 
     try {
-      const res = await fetch(`${apiUrl}/api/ai/api-keys/${provider}/${keyId}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
+      const res = await fetch(
+        `${apiUrl}/api/ai/api-keys/${provider}/${keyId}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+        },
+      );
 
       if (res.ok) {
         if (provider === "groq") {
@@ -407,24 +468,31 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
 
   const maskApiKey = (key: string): string => {
     if (key.length <= 8) return "*".repeat(key.length);
-    return key.substring(0, 4) + "*".repeat(key.length - 8) + key.substring(key.length - 4);
+    return (
+      key.substring(0, 4) +
+      "*".repeat(key.length - 8) +
+      key.substring(key.length - 4)
+    );
   };
 
   const handleRefreshPersona = async (contactPhone: string) => {
     try {
-      const res = await fetch(`${apiUrl}/api/ai/persona/${encodeURIComponent(contactPhone)}/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-      });
+      const res = await fetch(
+        `${apiUrl}/api/ai/persona/${encodeURIComponent(contactPhone)}/refresh`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+        },
+      );
 
       if (res.ok) {
         setContacts((prev) =>
           prev.map((c) =>
             c.phone === contactPhone
               ? { ...c, personaLastRefresh: new Date().toISOString() }
-              : c
-          )
+              : c,
+          ),
         );
       }
     } catch (err) {
@@ -432,7 +500,10 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     }
   };
 
-  const handleToggleMimicMode = async (contactPhone: string, enabled: boolean) => {
+  const handleToggleMimicMode = async (
+    contactPhone: string,
+    enabled: boolean,
+  ) => {
     try {
       const res = await fetch(`${apiUrl}/api/ai/mimic-mode`, {
         method: "POST",
@@ -443,7 +514,9 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
 
       if (res.ok) {
         setContacts((prev) =>
-          prev.map((c) => (c.phone === contactPhone ? { ...c, mimicMode: enabled } : c))
+          prev.map((c) =>
+            c.phone === contactPhone ? { ...c, mimicMode: enabled } : c,
+          ),
         );
       }
     } catch (err) {
@@ -453,12 +526,15 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
 
   const handleViewPersona = async (contactPhone: string) => {
     try {
-      const res = await fetch(`${apiUrl}/api/ai/persona/${encodeURIComponent(contactPhone)}`, {
-        credentials: "include",
-      });
+      const res = await fetch(
+        `${apiUrl}/api/ai/persona/${encodeURIComponent(contactPhone)}`,
+        {
+          credentials: "include",
+        },
+      );
       if (res.ok) {
         const data = await res.json();
-        setPersonaData(JSON.stringify(data, null, 2));
+        setPersonaData(data.persona ?? data);
         setPersonaModalOpen(true);
       }
     } catch (err) {
@@ -468,9 +544,12 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
 
   const handleViewHistory = async (contactPhone: string) => {
     try {
-      const res = await fetch(`${apiUrl}/api/ai/history/${encodeURIComponent(contactPhone)}`, {
-        credentials: "include",
-      });
+      const res = await fetch(
+        `${apiUrl}/api/ai/history/${encodeURIComponent(contactPhone)}`,
+        {
+          credentials: "include",
+        },
+      );
       if (res.ok) {
         const data = await res.json();
         setHistoryData(data.messages || []);
@@ -482,7 +561,11 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
   };
 
   const handleRefreshAllPersonas = async () => {
-    if (!window.confirm("Refresh personas for all contacts? This may take a moment.")) {
+    if (
+      !window.confirm(
+        "Refresh personas for all contacts? This may take a moment.",
+      )
+    ) {
       return;
     }
 
@@ -498,7 +581,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
           prev.map((c) => ({
             ...c,
             personaLastRefresh: new Date().toISOString(),
-          }))
+          })),
         );
         setSettingsSuccess("All personas refreshed");
         setTimeout(() => setSettingsSuccess(""), 3000);
@@ -568,7 +651,9 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
       <Card>
         <CardHeader>
           <CardTitle>API Configuration</CardTitle>
-          <CardDescription>Configure primary and fallback providers</CardDescription>
+          <CardDescription>
+            Configure primary and fallback providers
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-6 md:grid-cols-2">
           {/* Primary Provider */}
@@ -599,7 +684,10 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
             <Select
               value={settings.fallbackProvider}
               onValueChange={(value) =>
-                setSettings({ ...settings, fallbackProvider: value as Provider })
+                setSettings({
+                  ...settings,
+                  fallbackProvider: value as Provider,
+                })
               }
             >
               <SelectTrigger>
@@ -630,10 +718,17 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                   }}
                   className="flex-1 rounded border px-2 py-2 text-sm"
                 />
-                <Button variant="outline" size="sm" onClick={() => {
-                  setUseCustomGroqModel(false);
-                  setSettings({ ...settings, groqModel: "llama-3.1-8b-instant" });
-                }}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setUseCustomGroqModel(false);
+                    setSettings({
+                      ...settings,
+                      groqModel: "llama-3.1-8b-instant",
+                    });
+                  }}
+                >
                   Cancel
                 </Button>
               </div>
@@ -658,11 +753,15 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                       {model.name}
                     </SelectItem>
                   ))}
-                  <SelectItem value={CUSTOM_MODEL_VALUE}>✏️ Custom Model...</SelectItem>
+                  <SelectItem value={CUSTOM_MODEL_VALUE}>
+                    ✏️ Custom Model...
+                  </SelectItem>
                 </SelectContent>
               </Select>
             )}
-            <p className="text-xs text-muted-foreground">Primary model for Groq API calls</p>
+            <p className="text-xs text-muted-foreground">
+              Primary model for Groq API calls
+            </p>
           </div>
 
           {/* Fallback Groq Model Selection */}
@@ -676,14 +775,24 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                   value={customFallbackGroqModel}
                   onChange={(e) => {
                     setCustomFallbackGroqModel(e.target.value);
-                    setSettings({ ...settings, fallbackGroqModel: e.target.value });
+                    setSettings({
+                      ...settings,
+                      fallbackGroqModel: e.target.value,
+                    });
                   }}
                   className="flex-1 rounded border px-2 py-2 text-sm"
                 />
-                <Button variant="outline" size="sm" onClick={() => {
-                  setUseCustomFallbackGroqModel(false);
-                  setSettings({ ...settings, fallbackGroqModel: "llama-3.1-70b-versatile" });
-                }}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setUseCustomFallbackGroqModel(false);
+                    setSettings({
+                      ...settings,
+                      fallbackGroqModel: "llama-3.1-70b-versatile",
+                    });
+                  }}
+                >
                   Cancel
                 </Button>
               </div>
@@ -708,11 +817,15 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                       {model.name}
                     </SelectItem>
                   ))}
-                  <SelectItem value={CUSTOM_MODEL_VALUE}>✏️ Custom Model...</SelectItem>
+                  <SelectItem value={CUSTOM_MODEL_VALUE}>
+                    ✏️ Custom Model...
+                  </SelectItem>
                 </SelectContent>
               </Select>
             )}
-            <p className="text-xs text-muted-foreground">Fallback model when primary is unavailable</p>
+            <p className="text-xs text-muted-foreground">
+              Fallback model when primary is unavailable
+            </p>
           </div>
 
           {/* Gemini Model Selection */}
@@ -730,10 +843,17 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                   }}
                   className="flex-1 rounded border px-2 py-2 text-sm"
                 />
-                <Button variant="outline" size="sm" onClick={() => {
-                  setUseCustomGeminiModel(false);
-                  setSettings({ ...settings, geminiModel: "gemini-2.0-flash" });
-                }}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setUseCustomGeminiModel(false);
+                    setSettings({
+                      ...settings,
+                      geminiModel: "gemini-2.0-flash",
+                    });
+                  }}
+                >
                   Cancel
                 </Button>
               </div>
@@ -758,11 +878,15 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                       {model.name}
                     </SelectItem>
                   ))}
-                  <SelectItem value={CUSTOM_MODEL_VALUE}>✏️ Custom Model...</SelectItem>
+                  <SelectItem value={CUSTOM_MODEL_VALUE}>
+                    ✏️ Custom Model...
+                  </SelectItem>
                 </SelectContent>
               </Select>
             )}
-            <p className="text-xs text-muted-foreground">Model for Gemini API calls</p>
+            <p className="text-xs text-muted-foreground">
+              Model for Gemini API calls
+            </p>
           </div>
 
           {/* Groq API Key Management */}
@@ -927,6 +1051,44 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
             )}
           </div>
 
+          {/* Bot Command Name */}
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-sm font-medium">Bot Command Name</label>
+            <input
+              type="text"
+              placeholder="e.g. alex (type !alex <question> to get AI help)"
+              value={settings.botName ?? ""}
+              onChange={(e) =>
+                setSettings({ ...settings, botName: e.target.value })
+              }
+              className="w-full rounded border px-2 py-2 text-sm md:w-1/2"
+            />
+            <p className="text-xs text-muted-foreground">
+              Sets a public command name, e.g.{" "}
+              <code className="bg-muted px-1 rounded">!alex</code>. Your contacts can use this to interact with the AI.{" "}
+              <code className="bg-muted px-1 rounded">!me</code> is always available for your own private usage.
+            </p>
+          </div>
+
+          {/* Custom Instructions */}
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-sm font-medium">
+              Custom Instructions for AI
+            </label>
+            <textarea
+              placeholder="e.g. Reply in Roman Urdu. Keep responses very short. Use lots of emojis."
+              value={settings.customInstructions ?? ""}
+              onChange={(e) =>
+                setSettings({ ...settings, customInstructions: e.target.value })
+              }
+              rows={3}
+              className="w-full rounded border px-2 py-2 text-sm resize-none"
+            />
+            <p className="text-xs text-muted-foreground">
+              Additional behavior instructions appended to every AI prompt.
+            </p>
+          </div>
+
           {/* Test API Connection */}
           <div className="space-y-2 md:col-span-2">
             <label className="text-sm font-medium">Test API Connection</label>
@@ -964,9 +1126,13 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                     <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
                   )}
                   <div>
-                    <p className="font-medium">{testResult.provider.toUpperCase()}</p>
+                    <p className="font-medium">
+                      {testResult.provider.toUpperCase()}
+                    </p>
                     <p className="text-xs opacity-75">{testResult.message}</p>
-                    <p className="text-xs opacity-60 mt-1">{testResult.timestamp}</p>
+                    <p className="text-xs opacity-60 mt-1">
+                      {testResult.timestamp}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -991,14 +1157,15 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
         <CardHeader>
           <CardTitle>API Usage Statistics</CardTitle>
           <CardDescription>
-            Last updated: {new Date(usage.lastUpdated).toLocaleTimeString()}
+            Rolling per-minute usage (rate limit window) · Last updated:{" "}
+            {new Date(usage.lastUpdated).toLocaleTimeString()}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-6 md:grid-cols-2">
           {/* Groq Usage */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm font-medium">
-              <span>Groq API Usage</span>
+              <span>Groq — Calls / min</span>
               <span className="text-muted-foreground">
                 {usage.groq.used}/{usage.groq.limit}
               </span>
@@ -1008,14 +1175,15 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
               className="h-2"
             />
             <p className="text-xs text-muted-foreground">
-              {Math.round((usage.groq.used / usage.groq.limit) * 100)}% of limit used
+              {Math.round((usage.groq.used / usage.groq.limit) * 100)}% of{" "}
+              {usage.groq.limit} RPM limit used (last 60s)
             </p>
           </div>
 
           {/* Gemini Usage */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm font-medium">
-              <span>Gemini API Usage</span>
+              <span>Gemini — Calls / min</span>
               <span className="text-muted-foreground">
                 {usage.gemini.used}/{usage.gemini.limit}
               </span>
@@ -1025,7 +1193,8 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
               className="h-2"
             />
             <p className="text-xs text-muted-foreground">
-              {Math.round((usage.gemini.used / usage.gemini.limit) * 100)}% of limit used
+              {Math.round((usage.gemini.used / usage.gemini.limit) * 100)}% of{" "}
+              {usage.gemini.limit} RPM limit used (last 60s)
             </p>
           </div>
 
@@ -1060,7 +1229,9 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
         </CardHeader>
         <CardContent>
           {contacts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No active contacts yet</p>
+            <p className="text-sm text-muted-foreground">
+              No active contacts yet
+            </p>
           ) : (
             <div className="space-y-3">
               {contacts.map((contact) => (
@@ -1070,11 +1241,13 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                 >
                   <div className="flex-1">
                     <p className="font-medium">{contact.name}</p>
-                    <p className="text-sm text-muted-foreground">{contact.phone}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {contact.phone}
+                    </p>
                     <div className="mt-2 flex items-center gap-2">
                       <span
                         className={`text-xs font-medium ${getPersonaStatusColor(
-                          contact.personaLastRefresh
+                          contact.personaLastRefresh,
                         )}`}
                       >
                         Last refresh: {formatDate(contact.personaLastRefresh)}
@@ -1112,11 +1285,15 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
       <Card>
         <CardHeader>
           <CardTitle>Per-Contact Settings</CardTitle>
-          <CardDescription>Control AI features for individual contacts</CardDescription>
+          <CardDescription>
+            Control AI features for individual contacts
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {contacts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No active contacts yet</p>
+            <p className="text-sm text-muted-foreground">
+              No active contacts yet
+            </p>
           ) : (
             <div className="space-y-4">
               {contacts.map((contact) => (
@@ -1127,9 +1304,15 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-medium">{contact.name}</p>
-                      <p className="text-sm text-muted-foreground">{contact.phone}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {contact.phone}
+                      </p>
                     </div>
-                    <Badge variant={contact.status === "error" ? "destructive" : "secondary"}>
+                    <Badge
+                      variant={
+                        contact.status === "error" ? "destructive" : "secondary"
+                      }
+                    >
                       {contact.messageCount} messages
                     </Badge>
                   </div>
@@ -1190,23 +1373,252 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
         </CardContent>
       </Card>
 
+      {/* Commands Reference */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Commands Reference</CardTitle>
+          <CardDescription>
+            Type these commands in any WhatsApp chat (as yourself) to control AI
+            behavior
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-lg border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium">Command</th>
+                  <th className="text-left px-4 py-2 font-medium">
+                    Description
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !me &lt;question&gt;
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Private command (for your use only). Ask AI to answer/explain a message.
+                  </td>
+                </tr>
+                {settings.botName && (
+                  <tr>
+                    <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                      !{settings.botName} &lt;question&gt;
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      Public command (for your contacts). Allows them to interact with the AI directly.
+                    </td>
+                  </tr>
+                )}
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !mimic on
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Enable AI auto-reply for this contact (default: on).
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !mimic off
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Disable AI auto-reply for this contact only.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !mimic global on
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Enable AI globally (responds to ALL contacts).
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !mimic global off
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Disable AI globally (stops responding to everyone).
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !refresh persona
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Force-rebuild the AI persona for this contact from your
+                    message history.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !ai status
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Show current AI settings (enabled/disabled, provider,
+                    commands list).
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Control commands (like <strong>!mimic</strong>, <strong>!refresh</strong>) must be sent as <strong>your own messages</strong> in the chat.
+          </p>
+        </CardContent>
+      </Card>
+
       {/* Persona Modal */}
-      {personaModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <Card className="w-full max-w-2xl max-h-96 overflow-hidden flex flex-col">
+      {personaModalOpen && personaData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <Card className="w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
             <CardHeader className="flex-shrink-0">
-              <CardTitle>Persona Data</CardTitle>
+              <CardTitle>Persona Analysis</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                How the AI understands your communication style with this
+                contact
+              </p>
             </CardHeader>
-            <CardContent className="overflow-auto flex-1">
-              <pre className="text-xs overflow-auto rounded bg-muted p-4">
-                {personaData}
-              </pre>
+            <CardContent className="overflow-auto flex-1 space-y-4">
+              {/* AI-generated description — most important, show first */}
+              {!!personaData.aiDescription && (
+                <div className="rounded-lg bg-blue-50 border border-blue-200 p-4">
+                  <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-2">
+                    AI-Generated Voice Profile
+                  </p>
+                  <p className="text-sm text-blue-900 leading-relaxed whitespace-pre-wrap">
+                    {String(personaData.aiDescription)}
+                  </p>
+                </div>
+              )}
+
+              {/* Rule-based breakdown */}
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                {!!personaData.tone && (
+                  <div className="rounded border p-3">
+                    <p className="text-xs text-muted-foreground font-medium mb-1">
+                      Tone
+                    </p>
+                    <p className="capitalize font-medium">
+                      {String(personaData.tone)}
+                    </p>
+                  </div>
+                )}
+                {!!personaData.emotionalTone && (
+                  <div className="rounded border p-3">
+                    <p className="text-xs text-muted-foreground font-medium mb-1">
+                      Emotional Tone
+                    </p>
+                    <p className="capitalize font-medium">
+                      {String(personaData.emotionalTone)}
+                    </p>
+                  </div>
+                )}
+                {!!personaData.greetingStyle && (
+                  <div className="rounded border p-3">
+                    <p className="text-xs text-muted-foreground font-medium mb-1">
+                      Greeting Style
+                    </p>
+                    <p className="capitalize font-medium">
+                      {String(personaData.greetingStyle)}
+                    </p>
+                  </div>
+                )}
+                {!!personaData.emojiUsage && (
+                  <div className="rounded border p-3">
+                    <p className="text-xs text-muted-foreground font-medium mb-1">
+                      Emoji Usage
+                    </p>
+                    <p className="capitalize font-medium">
+                      {String(
+                        (personaData.emojiUsage as Record<string, unknown>)
+                          ?.frequency ?? "",
+                      )}
+                      {Array.isArray(
+                        (personaData.emojiUsage as Record<string, unknown>)
+                          ?.topEmojis,
+                      ) &&
+                        (
+                          (personaData.emojiUsage as Record<string, unknown>)
+                            .topEmojis as string[]
+                        ).length > 0 && (
+                          <span className="ml-2">
+                            {(
+                              (
+                                personaData.emojiUsage as Record<
+                                  string,
+                                  unknown
+                                >
+                              ).topEmojis as string[]
+                            ).join(" ")}
+                          </span>
+                        )}
+                    </p>
+                  </div>
+                )}
+                {!!personaData.messageFormat && (
+                  <div className="rounded border p-3">
+                    <p className="text-xs text-muted-foreground font-medium mb-1">
+                      Message Length
+                    </p>
+                    <p className="font-medium capitalize">
+                      {String(
+                        (personaData.messageFormat as Record<string, unknown>)
+                          ?.preferredStructure ?? "",
+                      )}{" "}
+                      (avg{" "}
+                      {String(
+                        (personaData.messageFormat as Record<string, unknown>)
+                          ?.avgLength ?? 0,
+                      )}{" "}
+                      chars)
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Common phrases */}
+              {Array.isArray(personaData.commonPhrases) &&
+                personaData.commonPhrases.length > 0 && (
+                  <div className="rounded border p-3">
+                    <p className="text-xs text-muted-foreground font-medium mb-2">
+                      Common Phrases
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {(personaData.commonPhrases as string[]).map(
+                        (phrase, i) => (
+                          <span
+                            key={i}
+                            className="rounded bg-muted px-2 py-1 text-xs"
+                          >
+                            "{phrase}"
+                          </span>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                )}
+
+              {/* Response patterns */}
+              {!!personaData.responsePatterns && (
+                <div className="rounded border p-3">
+                  <p className="text-xs text-muted-foreground font-medium mb-1">
+                    Response Patterns
+                  </p>
+                  <p className="text-sm">
+                    {String(personaData.responsePatterns)}
+                  </p>
+                </div>
+              )}
             </CardContent>
-            <div className="flex-shrink-0 border-t p-4 flex justify-end gap-2">
+            <div className="flex-shrink-0 border-t p-4 flex justify-end">
               <Button
                 onClick={() => {
                   setPersonaModalOpen(false);
-                  setPersonaData("");
+                  setPersonaData(null);
                 }}
                 variant="outline"
               >
@@ -1219,27 +1631,40 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
 
       {/* History Modal */}
       {historyModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <Card className="w-full max-w-2xl max-h-96 overflow-hidden flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <Card className="w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
             <CardHeader className="flex-shrink-0">
               <CardTitle>Message History (Last 50)</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                You = your messages &nbsp;|&nbsp; Contact = their messages
+              </p>
             </CardHeader>
             <CardContent className="overflow-auto flex-1">
               <div className="space-y-3">
                 {historyData.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No messages found</p>
+                  <p className="text-sm text-muted-foreground">
+                    No messages found
+                  </p>
                 ) : (
                   historyData.map((msg, idx) => (
-                    <div key={idx} className="border-l-2 border-muted pl-3 py-1">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={msg.sender === "user" ? "default" : "secondary"}>
-                          {msg.sender}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
+                    <div
+                      key={idx}
+                      className={`flex ${msg.sender === "me" ? "justify-end" : "justify-start"}`}
+                    >
+                      <div
+                        className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${
+                          msg.sender === "me"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted"
+                        }`}
+                      >
+                        <p className="break-words">{msg.message}</p>
+                        <p
+                          className={`mt-1 text-xs ${msg.sender === "me" ? "text-primary-foreground/70" : "text-muted-foreground"}`}
+                        >
                           {new Date(msg.timestamp).toLocaleString()}
-                        </span>
+                        </p>
                       </div>
-                      <p className="mt-1 text-sm">{msg.content}</p>
                     </div>
                   ))
                 )}

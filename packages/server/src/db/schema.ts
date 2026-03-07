@@ -54,11 +54,11 @@ export const verification = sqliteTable("verification", {
 
 // ─── WhatsApp App Tables ──────────────────────────────────────────────────────
 
-/** Log of every message sent (single, bulk, scheduled, auto-reply) */
+/** Log of every message sent (single, bulk, scheduled, auto-reply, ai) */
 export const messageLog = sqliteTable("message_log", {
   id: text("id").primaryKey(),
   userId: text("userId").references(() => user.id),
-  type: text("type", { enum: ["single", "bulk", "scheduled", "auto_reply"] }).notNull(),
+  type: text("type", { enum: ["single", "bulk", "scheduled", "auto_reply", "ai"] }).notNull(),
   phone: text("phone").notNull(),
   message: text("message").notNull(),
   status: text("status", { enum: ["sent", "failed"] }).notNull(),
@@ -157,6 +157,8 @@ export const aiSettings = sqliteTable("ai_settings", {
   groqModel: text("groqModel").notNull().default("llama-3.1-8b-instant"),
   fallbackGroqModel: text("fallbackGroqModel"),
   geminiModel: text("geminiModel").notNull().default("gemini-2.0-flash"),
+  botName: text("botName"),
+  customInstructions: text("customInstructions"),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
 });

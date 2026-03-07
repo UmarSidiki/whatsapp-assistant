@@ -22,6 +22,8 @@ export interface Persona {
   greetingStyle: string; // 'formal', 'casual', 'friendly', 'none'
   responsePatterns: string; // description of how they respond
   emotionalTone: string; // 'loving', 'caring', 'playful', 'neutral', 'professional', 'warm'
+  /** AI-generated natural language description of this person's voice. When present, used instead of rule-based prompt. */
+  aiDescription?: string;
 }
 
 // ─── Default Persona ──────────────────────────────────────────────────────────
@@ -605,50 +607,60 @@ export async function refreshPersona(
 /**
  * Generate system prompt for AI using the user's persona toward a contact.
  * The AI should reply AS the user, matching how they naturally talk to this person.
+ * If the persona has an AI-generated description, that is used as the primary voice guide.
  */
 export function generatePersonaPrompt(persona: Persona): string {
   const parts: string[] = [];
 
   parts.push(`You are a WhatsApp AI assistant replying on behalf of a real person. Your job is to write messages exactly the way this person naturally writes to this contact.`);
   parts.push("");
-  parts.push(`Here is how this person communicates with this contact:`);
-  parts.push("");
-  parts.push(`**Communication Tone**: ${persona.tone}`);
-  parts.push(`**Emotional Relationship**: ${persona.emotionalTone}`);
 
-  if (persona.emotionalTone === "loving") {
-    parts.push(`- This person is loving and affectionate with this contact. Use warm, intimate language. Include endearments naturally.`);
-  } else if (persona.emotionalTone === "caring") {
-    parts.push(`- This person is caring and attentive toward this contact. Show concern, ask about wellbeing, be supportive.`);
-  } else if (persona.emotionalTone === "playful") {
-    parts.push(`- This person is playful and humorous with this contact. Use light jokes, teasing, and fun energy.`);
-  } else if (persona.emotionalTone === "warm") {
-    parts.push(`- This person is warm and friendly with this contact. Be appreciative, positive, and encouraging.`);
-  } else if (persona.emotionalTone === "professional") {
-    parts.push(`- This person keeps a professional tone with this contact. Stay formal, concise, and task-oriented.`);
-  }
-
-  if (persona.emojiUsage.frequency !== "low" && persona.emojiUsage.topEmojis.length > 0) {
-    parts.push(
-      `**Emoji Usage**: ${persona.emojiUsage.frequency} frequency. Favorite emojis: ${persona.emojiUsage.topEmojis.join(" ")}`
-    );
+  // AI-generated description takes priority — it's richer than the rule-based breakdown
+  if (persona.aiDescription) {
+    parts.push(`Here is a detailed analysis of how this person communicates with this contact:`);
+    parts.push("");
+    parts.push(persona.aiDescription);
   } else {
-    parts.push(`**Emoji Usage**: Rarely uses emojis`);
+    parts.push(`Here is how this person communicates with this contact:`);
+    parts.push("");
+    parts.push(`**Communication Tone**: ${persona.tone}`);
+    parts.push(`**Emotional Relationship**: ${persona.emotionalTone}`);
+
+    if (persona.emotionalTone === "loving") {
+      parts.push(`- This person is loving and affectionate with this contact. Use warm, intimate language. Include endearments naturally.`);
+    } else if (persona.emotionalTone === "caring") {
+      parts.push(`- This person is caring and attentive toward this contact. Show concern, ask about wellbeing, be supportive.`);
+    } else if (persona.emotionalTone === "playful") {
+      parts.push(`- This person is playful and humorous with this contact. Use light jokes, teasing, and fun energy.`);
+    } else if (persona.emotionalTone === "warm") {
+      parts.push(`- This person is warm and friendly with this contact. Be appreciative, positive, and encouraging.`);
+    } else if (persona.emotionalTone === "professional") {
+      parts.push(`- This person keeps a professional tone with this contact. Stay formal, concise, and task-oriented.`);
+    }
+
+    if (persona.emojiUsage.frequency !== "low" && persona.emojiUsage.topEmojis.length > 0) {
+      parts.push(
+        `**Emoji Usage**: ${persona.emojiUsage.frequency} frequency. Favorite emojis: ${persona.emojiUsage.topEmojis.join(" ")}`
+      );
+    } else {
+      parts.push(`**Emoji Usage**: Rarely uses emojis`);
+    }
+
+    parts.push(
+      `**Message Length**: ${persona.messageFormat.preferredStructure} messages (avg ${persona.messageFormat.avgLength} chars)`
+    );
+
+    if (persona.commonPhrases.length > 0) {
+      parts.push(`**Signature Phrases**: "${persona.commonPhrases.join('", "')}"`);
+    }
+
+    if (persona.greetingStyle !== "none") {
+      parts.push(`**Greeting Style**: ${persona.greetingStyle}`);
+    }
+
+    parts.push(`**Communication Pattern**: ${persona.responsePatterns}`);
   }
 
-  parts.push(
-    `**Message Length**: ${persona.messageFormat.preferredStructure} messages (avg ${persona.messageFormat.avgLength} chars)`
-  );
-
-  if (persona.commonPhrases.length > 0) {
-    parts.push(`**Signature Phrases**: "${persona.commonPhrases.join('", "')}"`);
-  }
-
-  if (persona.greetingStyle !== "none") {
-    parts.push(`**Greeting Style**: ${persona.greetingStyle}`);
-  }
-
-  parts.push(`**Communication Pattern**: ${persona.responsePatterns}`);
   parts.push("");
   parts.push(`IMPORTANT RULES:`);
   parts.push(`- Write EXACTLY like this person — same length, same style, same emotions`);

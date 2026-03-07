@@ -20,7 +20,8 @@ export async function storeMessage(
   userId: string,
   contactPhone: string,
   message: string,
-  sender: "me" | "contact"
+  sender: "me" | "contact",
+  timestamp?: Date
 ): Promise<void> {
   if (!contactPhone || !message.trim()) {
     return;
@@ -41,7 +42,7 @@ export async function storeMessage(
       message: message.trim(),
       sender,
       isOutgoing: sender === "me",
-      timestamp: new Date(),
+      timestamp: timestamp ?? new Date(),
     });
   } catch (e) {
     logger.warn("AI assistant: Failed to store message", {
@@ -90,6 +91,37 @@ export async function getMessageHistory(
       contactPhone: normalizedPhone,
     });
     return [];
+  }
+}
+
+/**
+ * Get message count for a contact
+ */
+export async function getMessageCount(
+  userId: string,
+  contactPhone: string
+): Promise<number> {
+  const normalizedPhone = contactPhone.replace(/\D/g, "");
+
+  try {
+    const result = await db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(aiChatHistory)
+      .where(
+        and(
+          eq(aiChatHistory.userId, userId),
+          eq(aiChatHistory.contactPhone, normalizedPhone)
+        )
+      );
+
+    return result[0]?.count || 0;
+  } catch (e) {
+    logger.error("AI assistant: Failed to get message count", {
+      error: String(e),
+      userId,
+      contactPhone: normalizedPhone,
+    });
+    return 0;
   }
 }
 

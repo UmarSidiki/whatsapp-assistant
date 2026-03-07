@@ -1,5 +1,5 @@
 // Structured logger. Off by default — set LOG_ENABLED=true to enable.
-const enabled = process.env.LOG_ENABLED === "true";
+const enabled = process.env.LOG_ENABLED !== "false"; // Default to true if not set
 
 const fmt = (level: string, msg: string, data?: unknown) => {
   const ts = new Date().toISOString();

@@ -4,10 +4,11 @@ import { ProviderError } from "../lib/ai-provider";
 import * as aiResponseService from "../services/ai-response.service";
 import * as aiPersonaService from "../services/ai-persona.service";
 import * as aiAssistantService from "../services/ai-assistant.service";
+import { setMimicEnabledForContact, isMimicEnabledForContact } from "../services/message-handler.service";
 import * as apiUsageService from "../services/api-usage.service";
 import { db } from "../db";
-import { aiSettings, apiKeys } from "../db/schema";
-import { eq, and } from "drizzle-orm";
+import { aiSettings, apiKeys, aiChatHistory, aiPersona } from "../db/schema";
+import { eq, and, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { auth } from "../lib/auth";
 
@@ -116,6 +117,8 @@ export async function getSettings(c: Context) {
           groqModel: "llama-3.1-8b-instant",
           fallbackGroqModel: "llama-3.1-70b-versatile",
           geminiModel: "gemini-2.0-flash",
+          botName: null,
+          customInstructions: null,
         };
       }
 
@@ -127,6 +130,8 @@ export async function getSettings(c: Context) {
         groqModel: settings.groqModel,
         fallbackGroqModel: settings.fallbackGroqModel,
         geminiModel: settings.geminiModel,
+        botName: settings.botName ?? null,
+        customInstructions: settings.customInstructions ?? null,
       };
     } catch (error) {
       logger.error("Failed to get settings", { error: String(error), userId });
@@ -149,7 +154,7 @@ export async function updateSettings(c: Context) {
     }
 
     const body = await c.req.json();
-    const { aiEnabled, primaryProvider, fallbackProvider, groqModel, fallbackGroqModel, geminiModel } = body;
+    const { aiEnabled, primaryProvider, fallbackProvider, groqModel, fallbackGroqModel, geminiModel, botName, customInstructions } = body;
 
     // Validate input
     if (aiEnabled !== undefined && typeof aiEnabled !== "boolean") {
@@ -178,6 +183,12 @@ export async function updateSettings(c: Context) {
     if (geminiModel !== undefined && typeof geminiModel !== "string") {
       throw new ProviderError("Invalid geminiModel: must be string", 400);
     }
+    if (botName !== undefined && botName !== null && typeof botName !== "string") {
+      throw new ProviderError("Invalid botName: must be string or null", 400);
+    }
+    if (customInstructions !== undefined && customInstructions !== null && typeof customInstructions !== "string") {
+      throw new ProviderError("Invalid customInstructions: must be string or null", 400);
+    }
 
     try {
       const now = new Date();
@@ -199,6 +210,8 @@ export async function updateSettings(c: Context) {
           groqModel: groqModel ?? "llama-3.1-8b-instant",
           fallbackGroqModel: fallbackGroqModel ?? "llama-3.1-70b-versatile",
           geminiModel: geminiModel ?? "gemini-2.0-flash",
+          botName: botName ?? null,
+          customInstructions: customInstructions ?? null,
           createdAt: now,
           updatedAt: now,
         });
@@ -209,6 +222,8 @@ export async function updateSettings(c: Context) {
           groqModel: groqModel ?? "llama-3.1-8b-instant",
           fallbackGroqModel: fallbackGroqModel ?? "llama-3.1-70b-versatile",
           geminiModel: geminiModel ?? "gemini-2.0-flash",
+          botName: botName ?? null,
+          customInstructions: customInstructions ?? null,
         };
       } else {
         // Update existing settings
@@ -219,6 +234,8 @@ export async function updateSettings(c: Context) {
         if (groqModel !== undefined) updateData.groqModel = groqModel;
         if (fallbackGroqModel !== undefined) updateData.fallbackGroqModel = fallbackGroqModel;
         if (geminiModel !== undefined) updateData.geminiModel = geminiModel;
+        if (botName !== undefined) updateData.botName = botName;
+        if (customInstructions !== undefined) updateData.customInstructions = customInstructions;
 
         await db.update(aiSettings).set(updateData).where(eq(aiSettings.userId, userId)).run();
 
@@ -238,6 +255,8 @@ export async function updateSettings(c: Context) {
               groqModel: settings.groqModel,
               fallbackGroqModel: settings.fallbackGroqModel ?? undefined,
               geminiModel: settings.geminiModel ?? undefined,
+              botName: settings.botName ?? null,
+              customInstructions: settings.customInstructions ?? null,
             }
           : {
               aiEnabled: true,
@@ -246,6 +265,8 @@ export async function updateSettings(c: Context) {
               groqModel: "llama-3.1-8b-instant",
               fallbackGroqModel: "llama-3.1-70b-versatile",
               geminiModel: "gemini-2.0-flash",
+              botName: null,
+              customInstructions: null,
             };
       }
 
@@ -304,7 +325,7 @@ export async function getPersona(c: Context) {
 
 /**
  * POST /api/ai/persona/:contactPhone/refresh
- * Refresh/extract persona for a contact
+ * Refresh/extract persona for a contact (rule-based + AI description)
  * Response: { persona: {...}, refreshedAt: Date }
  */
 export async function refreshPersona(c: Context) {
@@ -320,7 +341,29 @@ export async function refreshPersona(c: Context) {
     }
 
     try {
-      const persona = await aiPersonaService.refreshPersona(userId, contactPhone);
+      // Step 1: rule-based extraction (always works, fast)
+      let persona = await aiPersonaService.refreshPersona(userId, contactPhone);
+
+      // Step 2: enrich with AI-generated voice description (best-effort)
+      try {
+        const history = await aiAssistantService.getMessageHistory(userId, contactPhone, 100);
+        const aiDescription = await aiResponseService.generatePersonaAIDescription(
+          userId,
+          contactPhone,
+          history
+        );
+        if (aiDescription) {
+          persona.aiDescription = aiDescription;
+          await aiPersonaService.savePersona(userId, contactPhone, persona);
+          logger.info("AI persona description generated during refresh", { userId, contactPhone });
+        }
+      } catch (e) {
+        logger.warn("AI description skipped during persona refresh", {
+          userId,
+          contactPhone,
+          error: String(e),
+        });
+      }
 
       return {
         persona,
@@ -658,7 +701,8 @@ export async function removeGeminiApiKey(c: Context) {
 
 /**
  * GET /api/ai/contacts
- * Get all contacts that have AI chat history
+ * Get all contacts that have AI chat history, with real message counts, persona dates,
+ * last message date, and per-contact mimic state.
  */
 export async function getContacts(c: Context) {
   return handle(c, async () => {
@@ -668,15 +712,54 @@ export async function getContacts(c: Context) {
     }
 
     try {
-      const phones = await aiAssistantService.getContacts(userId);
-      const contacts = phones.map((phone) => ({
-        id: phone,
-        phone,
-        name: phone,
-        messageCount: 0,
-        mimicMode: false,
-        status: "ready" as const,
-      }));
+      // One query: message count + last message timestamp per contact
+      const msgStats = await db
+        .select({
+          contactPhone: aiChatHistory.contactPhone,
+          count: sql<number>`count(*)`,
+          lastTs: sql<number>`max(${aiChatHistory.timestamp})`,
+        })
+        .from(aiChatHistory)
+        .where(eq(aiChatHistory.userId, userId))
+        .groupBy(aiChatHistory.contactPhone);
+
+      // One query: persona lastUpdated per contact
+      const personaRows = await db
+        .select({
+          contactPhone: aiPersona.contactPhone,
+          lastUpdated: aiPersona.lastUpdated,
+        })
+        .from(aiPersona)
+        .where(eq(aiPersona.userId, userId));
+
+      const personaMap = new Map(personaRows.map((p) => [p.contactPhone, p.lastUpdated]));
+
+      const contacts = msgStats.map((stat) => {
+        // lastTs is raw SQLite integer (Unix seconds for mode: "timestamp")
+        const lastMessageDate = stat.lastTs
+          ? new Date(Number(stat.lastTs) * 1000).toISOString()
+          : undefined;
+        const personaDate = personaMap.get(stat.contactPhone);
+
+        return {
+          id: stat.contactPhone,
+          phone: stat.contactPhone,
+          name: stat.contactPhone,
+          messageCount: Number(stat.count),
+          lastMessageDate,
+          mimicMode: isMimicEnabledForContact(userId, stat.contactPhone),
+          status: "ready" as const,
+          personaLastRefresh: personaDate?.toISOString(),
+        };
+      });
+
+      // Sort by last message date descending (most recent first)
+      contacts.sort((a, b) => {
+        if (!a.lastMessageDate) return 1;
+        if (!b.lastMessageDate) return -1;
+        return b.lastMessageDate.localeCompare(a.lastMessageDate);
+      });
+
       return { contacts };
     } catch (error) {
       logger.error("Failed to get contacts", { error: String(error), userId });
@@ -716,7 +799,16 @@ export async function testConnection(c: Context) {
         return { success: false, message: `No API keys configured for ${provider}. Add keys in settings.` };
       }
 
-      return { success: true, message: `${provider} API key found and configured` };
+      // Perform real test call (no JSON mode — plain text response)
+      const response = await aiResponseService.callAIProvider(
+        userId, 
+        provider as "groq" | "gemini", 
+        "Say 'Connection successful' in a single sentence.", 
+        true,
+        false
+      );
+
+      return { success: true, message: `${provider} connection successful. Response: "${response.substring(0, 50)}"` };
     } catch (error) {
       logger.error("Failed to test connection", { error: String(error), userId, provider });
       return { success: false, message: `Failed to test connection: ${String(error)}` };
@@ -746,13 +838,15 @@ export async function toggleMimicMode(c: Context) {
       throw new ProviderError("enabled must be boolean", 400);
     }
 
+    setMimicEnabledForContact(userId, contactId, enabled);
+
     return { success: true, contactId, enabled };
   });
 }
 
 /**
  * POST /api/ai/refresh-all-personas
- * Refresh personas for all contacts
+ * Refresh personas for all contacts (rule-based + AI description, best-effort per contact)
  */
 export async function refreshAllPersonas(c: Context) {
   return handle(c, async () => {
@@ -767,7 +861,25 @@ export async function refreshAllPersonas(c: Context) {
 
       for (const phone of phones) {
         try {
-          await aiPersonaService.refreshPersona(userId, phone);
+          // Rule-based extraction
+          let persona = await aiPersonaService.refreshPersona(userId, phone);
+
+          // Enrich with AI description (best-effort)
+          try {
+            const history = await aiAssistantService.getMessageHistory(userId, phone, 100);
+            const aiDescription = await aiResponseService.generatePersonaAIDescription(
+              userId,
+              phone,
+              history
+            );
+            if (aiDescription) {
+              persona.aiDescription = aiDescription;
+              await aiPersonaService.savePersona(userId, phone, persona);
+            }
+          } catch {
+            // AI description is not critical — continue to next contact
+          }
+
           refreshed++;
         } catch (e) {
           logger.warn("Failed to refresh persona for contact", { userId, phone, error: String(e) });

@@ -134,8 +134,11 @@ export class GroqProvider implements AIProvider {
         error instanceof Error ? error.message : "Unknown Groq API error";
       logger.error("Groq API error", { error: message });
 
-      if (message.includes("401") || message.includes("invalid")) {
+      if (message.includes("401") || message.includes("api_key") || message.includes("authentication")) {
         throw new ProviderError("Invalid Groq API key", 401);
+      }
+      if (message.includes("400") || message.includes("invalid_request")) {
+        throw new ProviderError(`Groq bad request: ${message}`, 400);
       }
       if (message.includes("429")) {
         throw new ProviderError("Groq rate limit exceeded", 429);
@@ -251,8 +254,11 @@ export class GeminiProvider implements AIProvider {
         error instanceof Error ? error.message : "Unknown Gemini API error";
       logger.error("Gemini API error", { error: message });
 
-      if (message.includes("401") || message.includes("invalid")) {
+      if (message.includes("401") || message.includes("api_key") || message.includes("authentication")) {
         throw new ProviderError("Invalid Gemini API key", 401);
+      }
+      if (message.includes("400") || message.includes("invalid_request")) {
+        throw new ProviderError(`Gemini bad request: ${message}`, 400);
       }
       if (message.includes("429")) {
         throw new ProviderError("Gemini rate limit exceeded", 429);

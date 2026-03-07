@@ -107,13 +107,13 @@ export async function sendSegmented(
       // Presence update is best-effort
     }
 
-    // Wait a human-like delay based on segment length (40-80ms per char, min 800ms, max 4000ms)
+    // Wait a human-like delay based on segment length (70-130ms per char, min 1500ms, max 7000ms)
     if (i > 0) {
-      const typingDelay = Math.min(4000, Math.max(800, segments[i].length * rand(40, 80)));
+      const typingDelay = Math.min(7000, Math.max(1500, segments[i].length * rand(70, 130)));
       await sleep(typingDelay);
-    } else if (segments.length > 1) {
-      // Brief initial delay for first segment
-      await sleep(rand(300, 800));
+    } else {
+      // Initial typing delay for first segment (always — even if single message)
+      await sleep(rand(800, 2000));
     }
 
     // Send the segment
@@ -126,14 +126,56 @@ export async function sendSegmented(
       // Best-effort
     }
 
-    // Small gap between segments
+    // Pause between segments
     if (i < segments.length - 1) {
-      await sleep(rand(500, 1500));
+      await sleep(rand(1000, 2500));
     }
   }
 
   logger.info("Segmented message sent", { userId, jid, segmentCount: segments.length });
   return segments;
+}
+
+/**
+ * Send pre-split message segments with human-like delays.
+ * Use this when the AI already returned an array of segments — avoids re-splitting.
+ */
+export async function sendSegments(
+  userId: string,
+  jid: string,
+  segments: string[]
+): Promise<void> {
+  if (segments.length === 0) return;
+  const socket = getSocketFor(userId);
+
+  for (let i = 0; i < segments.length; i++) {
+    try {
+      await socket.sendPresenceUpdate("composing", jid);
+    } catch {
+      // Best-effort
+    }
+
+    if (i > 0) {
+      const typingDelay = Math.min(7000, Math.max(1500, segments[i].length * rand(70, 130)));
+      await sleep(typingDelay);
+    } else {
+      await sleep(rand(800, 2000));
+    }
+
+    await socket.sendMessage(jid, { text: segments[i] });
+
+    try {
+      await socket.sendPresenceUpdate("paused", jid);
+    } catch {
+      // Best-effort
+    }
+
+    if (i < segments.length - 1) {
+      await sleep(rand(1000, 2500));
+    }
+  }
+
+  logger.info("AI segments sent", { userId, jid, segmentCount: segments.length });
 }
 
 // ─── Batch incoming rapid messages ────────────────────────────────────────────

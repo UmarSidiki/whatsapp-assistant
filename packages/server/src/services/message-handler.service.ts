@@ -6,7 +6,7 @@ import { logger } from "../lib/logger";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface CommandResult {
-  type: "explain" | "mimic" | "refresh" | "status" | null;
+  type: "explain" | "mimic" | "global_mimic" | "refresh" | "status" | null;
   content?: string; // for !me, the text to explain
   requiresResponse?: boolean;
   data?: any;
@@ -24,11 +24,19 @@ function getMimicKey(userId: string, contactPhone: string): string {
   return `${userId}_${contactPhone}`;
 }
 
-function isMimicEnabledForContact(userId: string, contactPhone: string): boolean {
-  return mimicSettings.get(getMimicKey(userId, contactPhone)) ?? false;
+/**
+ * Returns true if mimic mode is active for this contact.
+ * Default (not in map) → active (opt-out model).
+ * Only returns false if explicitly disabled via !mimic off.
+ */
+export function isMimicEnabledForContact(userId: string, contactPhone: string): boolean {
+  const key = getMimicKey(userId, contactPhone);
+  // If never set, default to enabled (opt-out: AI responds to everyone unless disabled)
+  if (!mimicSettings.has(key)) return true;
+  return mimicSettings.get(key) ?? true;
 }
 
-function setMimicEnabledForContact(
+export function setMimicEnabledForContact(
   userId: string,
   contactPhone: string,
   enabled: boolean
@@ -55,6 +63,16 @@ export function parseCommand(message: string): CommandResult {
     return {
       type: "explain",
       content: meMatch[1].trim(),
+      requiresResponse: true,
+    };
+  }
+
+  // !mimic global on|off - toggle AI globally (before per-contact check)
+  const mimicGlobalMatch = trimmed.match(/^!mimic\s+global\s+(on|off)$/i);
+  if (mimicGlobalMatch) {
+    return {
+      type: "global_mimic",
+      data: { enabled: mimicGlobalMatch[1].toLowerCase() === "on" },
       requiresResponse: true,
     };
   }
@@ -115,8 +133,22 @@ export async function executeCommand(
         const enabled = command.data?.enabled ?? false;
         setMimicEnabledForContact(userId, contactPhone, enabled);
         return enabled
-          ? "🎭 Mimic mode enabled - I'll respond in your voice"
-          : "🎭 Mimic mode disabled";
+          ? "🎭 Mimic mode enabled for this contact"
+          : "🎭 Mimic mode disabled for this contact";
+
+      case "global_mimic":
+        const globalEnabled = command.data?.enabled ?? false;
+        try {
+          await db
+            .update(aiSettings)
+            .set({ aiEnabled: globalEnabled, updatedAt: new Date() })
+            .where(eq(aiSettings.userId, userId));
+          return globalEnabled
+            ? "✅ AI assistant globally enabled — responding to all contacts"
+            : "🔴 AI assistant globally disabled — not responding to anyone";
+        } catch {
+          return "❌ Failed to update global AI setting";
+        }
 
       case "refresh":
         // Call refreshPersona logic
@@ -184,18 +216,26 @@ async function getAIStatusMessage(userId: string): Promise<string> {
       .then((rows) => rows[0]);
 
     if (!settings) {
-      return "⚙️ AI Settings:\n- Status: Not configured\n- Primary Provider: Not set";
+      return "⚙️ AI Settings:\n- Status: Not configured\n- Primary Provider: Not set\n\n⚠️ Please configure AI settings in the dashboard.";
     }
 
     const status = settings.aiEnabled ? "✅ Enabled" : "❌ Disabled";
     const provider = settings.primaryProvider || "groq";
     const fallback = settings.fallbackProvider ? `${settings.fallbackProvider}` : "None";
+    const botCmd = (settings as any).botName ? `!${(settings as any).botName} <text>` : null;
 
     return (
       `⚙️ AI Settings:\n` +
       `- Status: ${status}\n` +
       `- Primary Provider: ${provider}\n` +
-      `- Fallback Provider: ${fallback}`
+      `- Fallback Provider: ${fallback}\n\n` +
+      `Commands:\n` +
+      `!me <text> - Ask AI for analysis/response (private, only you see this)\n` +
+      (botCmd ? `${botCmd} - Public AI assistant your contacts can use; also works as your private alias\n` : "") +
+      `!mimic on/off - Toggle auto-reply for this contact\n` +
+      `!mimic global on/off - Toggle AI for ALL contacts\n` +
+      `!refresh persona - Rebuild persona from chat history\n` +
+      `!ai status - Show this message`
     );
   } catch (error) {
     logger.error("Failed to get AI settings", {
@@ -243,12 +283,14 @@ export async function shouldGenerateAIResponse(
     };
   }
 
-  // Check if mimic mode is enabled for this contact
-  const mimicEnabled = isMimicEnabledForContact(userId, contactPhone);
+  // When AI is enabled globally, respond to ALL contacts by default.
+  // Per-contact mimic toggle is now opt-OUT: only skip if explicitly disabled.
+  const mimicKey = getMimicKey(userId, contactPhone);
+  const explicitlyDisabled = mimicSettings.has(mimicKey) && mimicSettings.get(mimicKey) === false;
 
   return {
-    shouldRespond: mimicEnabled,
-    mode: mimicEnabled ? "mimic" : null,
+    shouldRespond: !explicitlyDisabled,
+    mode: !explicitlyDisabled ? "mimic" : null,
     command: command.type ? command : undefined,
   };
 }
