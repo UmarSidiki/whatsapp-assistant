@@ -27,11 +27,14 @@ jobs:
 
             cd /var/www/whatsapp-assistant
 
+            # 1.1 Stop systemd service to avoid file locks during update
+            sudo systemctl stop whatsapp-assistant
+
             # 2. Update code (removed 'sudo' to avoid permission locks)
             git pull origin main
 
             # 3. Install and Build
-            npm install --production
+            npm install
             npm run db:migrate --if-present
             npm run build --if-present
 
