@@ -22,8 +22,8 @@ jobs:
           script: |
             cd /var/www/whatsapp-assistant
             # 1. Update code and build while the old version is still running
-            git pull origin main
-            npm install --production
+            sudo git pull
+            npm install
             
             # Run migrations (if applicable)
             npm run db:migrate
