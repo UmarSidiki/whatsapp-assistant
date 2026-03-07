@@ -17,8 +17,9 @@ jobs:
         with:
           host: ${{ secrets.HOST }}       # Your VPS IP
           username: ubuntu                       # Based on your terminal prompt
-          key: ${{ secrets.DEPLOY }}
+          key: ${{ secrets.DEPLOY }}   # Your private SSH key (add this to your GitHub secrets)
           port: 22
+          script_stop: true
           script: |
             cd /var/www/whatsapp-assistant
             # 1. Update code and build while the old version is still running
