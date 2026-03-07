@@ -7,7 +7,15 @@ import { normalizeContactId } from "./wa-socket";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface CommandResult {
-  type: "explain" | "mimic" | "global_mimic" | "refresh" | "status" | "download_media" | null;
+  type:
+    | "explain"
+    | "mimic"
+    | "global_mimic"
+    | "refresh"
+    | "status"
+    | "download_media"
+    | "spam"
+    | null;
   content?: string; // for !me, the text to explain
   requiresResponse?: boolean;
   data?: any;
@@ -63,7 +71,8 @@ export function clearMimicSettingsForUser(userId: string): void {
  * Parse message for special commands
  * Supports:
  * - !me <message>          → Explain/answer mode
- * - !me -r - task -5 min   → Standardized reminder syntax
+ * - !me -r - task -time    → Standardized reminder syntax (relative/AM-PM)
+ * - !me -s 10 -d 5 - hi    → Repeat message in chat
  * - !mimic on/off          → Toggle persona mimicry
  * - !refresh persona       → Force update persona
  * - !ai status             → Show AI settings
@@ -87,6 +96,47 @@ export function parseCommand(message: string): CommandResult {
     return {
       type: "download_media",
       data: { target: "number", number: downloadNumberMatch[1] },
+      requiresResponse: true,
+    };
+  }
+
+  // !me -s {count} -d {seconds} - {message}
+  const spamPrefixMatch = trimmed.match(/^!me\s+-s\s+(\d+)\s+-d\s+(\d+)\s*-\s+(.+)$/i);
+  if (spamPrefixMatch) {
+    return {
+      type: "spam",
+      data: {
+        count: Number(spamPrefixMatch[1]),
+        delaySeconds: Number(spamPrefixMatch[2]),
+        message: spamPrefixMatch[3]?.trim(),
+      },
+      requiresResponse: true,
+    };
+  }
+
+  // !me {message} -s {count} -d {seconds}
+  const spamSuffixMatch = trimmed.match(/^!me\s+(.+?)\s+-s\s+(\d+)\s+-d\s+(\d+)$/i);
+  if (spamSuffixMatch) {
+    return {
+      type: "spam",
+      data: {
+        message: spamSuffixMatch[1]?.trim(),
+        count: Number(spamSuffixMatch[2]),
+        delaySeconds: Number(spamSuffixMatch[3]),
+      },
+      requiresResponse: true,
+    };
+  }
+
+  // !me -s {count} -d {seconds} (message can come from replied text)
+  const spamWithoutMessageMatch = trimmed.match(/^!me\s+-s\s+(\d+)\s+-d\s+(\d+)$/i);
+  if (spamWithoutMessageMatch) {
+    return {
+      type: "spam",
+      data: {
+        count: Number(spamWithoutMessageMatch[1]),
+        delaySeconds: Number(spamWithoutMessageMatch[2]),
+      },
       requiresResponse: true,
     };
   }
@@ -198,6 +248,9 @@ export async function executeCommand(
       case "status":
         return await getAIStatusMessage(userId);
 
+      case "spam":
+        return "✅ Spam command parsed";
+
       default:
         return "Unknown command";
     }
@@ -254,7 +307,12 @@ async function refreshPersona(userId: string, contactPhone: string): Promise<str
 async function getAIStatusMessage(userId: string): Promise<string> {
   try {
     const settings = await db
-      .select()
+      .select({
+        aiEnabled: aiSettings.aiEnabled,
+        primaryProvider: aiSettings.primaryProvider,
+        fallbackProvider: aiSettings.fallbackProvider,
+        botName: aiSettings.botName,
+      })
       .from(aiSettings)
       .where(eq(aiSettings.userId, userId))
       .then((rows) => rows[0]);
@@ -273,9 +331,22 @@ async function getAIStatusMessage(userId: string): Promise<string> {
     const status = settings.aiEnabled ? "✅ Enabled" : "❌ Disabled";
     const provider = settings.primaryProvider || "groq";
     const fallback = settings.fallbackProvider ? `${settings.fallbackProvider}` : "None";
-    const botCmd = settings.botName?.trim()
-      ? `• !${settings.botName.trim()} <text> — public AI assistant command for contacts`
+    const botAlias = settings.botName?.trim() || "";
+    const botCmd = botAlias
+      ? `• !${botAlias} <text> — public AI assistant command for contacts`
       : null;
+    const reminderCommand = botAlias
+      ? `!me -r - {task} -{time} (or !${botAlias} -r - {task} -{time})`
+      : "!me -r - {task} -{time}";
+    const downloadHereCommand = botAlias
+      ? `!me -d -here (or !${botAlias} -d -here)`
+      : "!me -d -here";
+    const downloadNumberCommand = botAlias
+      ? `!me -d -n {number} (or !${botAlias} -d -n {number})`
+      : "!me -d -n {number}";
+    const spamCommand = botAlias
+      ? `!me -s {count} -d {seconds} - {message} (or !${botAlias} -s {count} -d {seconds} - {message})`
+      : "!me -s {count} -d {seconds} - {message}";
 
     return [
       "⚙️ AI Assistant Status",
@@ -286,14 +357,27 @@ async function getAIStatusMessage(userId: string): Promise<string> {
       "",
       "📌 Commands",
       "• !me <text> — private AI analysis/response",
-      "• !me -r - {task} -{time} {unit} — schedule reminder (e.g. -5 minutes)",
+      "• !me -r - {task} -{time} — schedule reminder (e.g. -30 minutes or -4:00 AM)",
       ...(botCmd ? [botCmd] : []),
       "• !me -d -here — save view-once media to this chat",
       "• !me -d -n {number} — save view-once media to a number",
+      "• !me -s {count} -d {seconds} - {message} — repeat message with delay",
       "• !mimic on/off — toggle auto-reply for this contact",
       "• !mimic global on/off — toggle AI for all contacts",
       "• !refresh persona — rebuild persona from chat history",
       "• !ai status — show this status",
+      "",
+      "📘 Setup guide",
+      `• Reminder format: ${reminderCommand}`,
+      "  Example: !me -r - pay electricity bill -30 minutes",
+      "  Example: !me -r - join standup -4:00 AM",
+      "• Once-view download:",
+      "  1) Reply to a once-view media message",
+      `  2) Use ${downloadHereCommand} to copy it in this chat`,
+      `  3) Use ${downloadNumberCommand} to send it to another number`,
+      `• Repeat message format: ${spamCommand}`,
+      "  Example: !me -s 10 -d 5 - payment reminder",
+      "  Tip: reply to a text and use !me -s 10 -d 5 to repeat replied text",
     ].join("\n");
   } catch (error) {
     logger.error("Failed to get AI settings", {

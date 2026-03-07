@@ -1446,6 +1446,43 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                     Private command (for your use only). Ask AI to answer/explain a message.
                   </td>
                 </tr>
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !me -r - {"{task}"} -{"{time}"}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Schedule a reminder with relative or AM/PM time. Examples:{" "}
+                    <code className="bg-muted px-1 rounded">!me -r - pay bill -30 minutes</code>{" "}
+                    or{" "}
+                    <code className="bg-muted px-1 rounded">!me -r - join standup -4:00 AM</code>.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !me -d -here
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Reply to a once-view media message, then run this command to copy that media into the same chat.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !me -d -n {"{number}"}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Reply to a once-view media message, then run this command to forward the same media to another number.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-3 font-mono text-xs bg-muted/30">
+                    !me -s {"{count}"} -d {"{seconds}"} - {"{message}"}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    Repeat a message multiple times with a delay. Example:{" "}
+                    <code className="bg-muted px-1 rounded">!me -s 10 -d 5 - payment reminder</code>. You can also reply to a text and use{" "}
+                    <code className="bg-muted px-1 rounded">!me -s 10 -d 5</code>.
+                  </td>
+                </tr>
                 {settings.botName && (
                   <tr>
                     <td className="px-4 py-3 font-mono text-xs bg-muted/30">
@@ -1508,6 +1545,17 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                 </tr>
               </tbody>
             </table>
+          </div>
+          <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground space-y-2">
+            <p>
+              <strong>Reminder setup:</strong> send <code className="bg-muted px-1 rounded">!me -r - {"{task}"} -{"{time}"}</code> (or <code className="bg-muted px-1 rounded">!{settings.botName || "yourBotName"} -r - {"{task}"} -{"{time}"}</code> if you configured a bot name). Time can be relative (<code className="bg-muted px-1 rounded">-30 minutes</code>) or AM/PM (<code className="bg-muted px-1 rounded">-4:00 AM</code>).
+            </p>
+            <p>
+              <strong>Once-view media download:</strong> first reply to the once-view photo/video, then send <code className="bg-muted px-1 rounded">!me -d -here</code> to keep it in the current chat or <code className="bg-muted px-1 rounded">!me -d -n {"{number}"}</code> to send it to another number.
+            </p>
+            <p>
+              <strong>Repeat message setup:</strong> send <code className="bg-muted px-1 rounded">!me -s {"{count}"} -d {"{seconds}"} - {"{message}"}</code> (or <code className="bg-muted px-1 rounded">!{settings.botName || "yourBotName"} -s {"{count}"} -d {"{seconds}"} - {"{message}"}</code>) to repeat a text with delay. You can also reply to a text and run <code className="bg-muted px-1 rounded">!me -s {"{count}"} -d {"{seconds}"}</code>.
+            </p>
           </div>
           <p className="text-xs text-muted-foreground">
             Control commands (like <strong>!mimic</strong>, <strong>!refresh</strong>) must be sent as <strong>your own messages</strong> in the chat.

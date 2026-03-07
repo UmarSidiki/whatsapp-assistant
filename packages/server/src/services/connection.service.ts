@@ -197,6 +197,12 @@ interface QuotedMediaDescriptor {
   ptt?: boolean;
 }
 
+interface SpamCommandParams {
+  message: string;
+  count: number;
+  delaySeconds: number;
+}
+
 function parseReminderIntent(input: string, now: Date = new Date()): ParsedReminderIntent | null {
   const trimmed = input.trim().replace(/\s+/g, " ");
   const standardizedIntent = parseStandardizedReminderIntent(trimmed, now);
@@ -223,22 +229,35 @@ function parseReminderIntent(input: string, now: Date = new Date()): ParsedRemin
 }
 
 function parseStandardizedReminderIntent(input: string, now: Date): ParsedReminderIntent | null {
-  const standardMatch = input.match(
-    /^-?r\s*-\s*(.+?)\s*-\s*-?(\d+)\s*(seconds?|secs?|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|day|d|din|ghanta|ghante)\.?$/i
-  );
+  const standardMatch = input.match(/^-?r\s*-\s*(.+?)\s*-\s*(.+?)\.?$/i);
   if (!standardMatch) {
     return null;
   }
 
   const task = normalizeReminderTask(standardMatch[1] ?? "");
-  const amount = Number(standardMatch[2] ?? "");
-  const unitMs = parseReminderUnitMs((standardMatch[3] ?? "").toLowerCase());
-
-  if (!task || !Number.isFinite(amount) || amount <= 0 || !unitMs) {
+  const scheduleInput = (standardMatch[2] ?? "").trim();
+  if (!task || !scheduleInput) {
     return null;
   }
 
-  return { task, scheduledAt: new Date(now.getTime() + amount * unitMs) };
+  const relativeMatch = scheduleInput.match(
+    /^-?(\d+)\s*(seconds?|secs?|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|day|d|din|ghanta|ghante)$/i
+  );
+  if (relativeMatch) {
+    const amount = Number(relativeMatch[1] ?? "");
+    const unitMs = parseReminderUnitMs((relativeMatch[2] ?? "").toLowerCase());
+    if (!Number.isFinite(amount) || amount <= 0 || !unitMs) {
+      return null;
+    }
+    return { task, scheduledAt: new Date(now.getTime() + amount * unitMs) };
+  }
+
+  const scheduledAt = parseReminderDateTime(scheduleInput, now);
+  if (!scheduledAt) {
+    return null;
+  }
+
+  return { task, scheduledAt };
 }
 
 function parseRelativeReminderIntent(input: string, now: Date): ParsedReminderIntent | null {
@@ -385,6 +404,52 @@ function formatReminderConfirmation(task: string, scheduledAt: Date): string {
     `• Task: ${task}`,
     `• Time: ${scheduledAt.toLocaleString()}`,
   ].join("\n");
+}
+
+function parseSpamCommandParams(
+  command: CommandResult,
+  fallbackMessage?: string
+): SpamCommandParams {
+  const rawMessage = String(command.data?.message ?? fallbackMessage ?? "").trim();
+  const count = Number(command.data?.count ?? "");
+  const delaySeconds = Number(command.data?.delaySeconds ?? "");
+
+  if (!rawMessage) {
+    throw new Error("Spam message cannot be empty. Add message text or reply to a text message.");
+  }
+  if (!Number.isFinite(count) || count < 1 || count > 100) {
+    throw new Error("Spam count must be between 1 and 100.");
+  }
+  if (!Number.isFinite(delaySeconds) || delaySeconds < 1 || delaySeconds > 3600) {
+    throw new Error("Spam delay must be between 1 and 3600 seconds.");
+  }
+
+  return {
+    message: rawMessage,
+    count,
+    delaySeconds,
+  };
+}
+
+async function waitMs(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+async function sendRepeatedTextMessage(
+  userId: string,
+  jid: string,
+  params: SpamCommandParams
+): Promise<void> {
+  const sock = getSocketFor(userId);
+  for (let i = 0; i < params.count; i++) {
+    await sock.sendMessage(jid, { text: params.message });
+    if (i < params.count - 1) {
+      await waitMs(params.delaySeconds * 1000);
+    }
+  }
 }
 
 function getQuotedMediaDescriptor(quotedMessage?: proto.IMessage | null): QuotedMediaDescriptor | null {
@@ -1067,17 +1132,20 @@ async function editOwnMessage(
 }
 
 /**
- * Handle own-message (fromMe) commands: !me, !{botName}, !mimic, !refresh, !ai status, !me -d.
+ * Handle own-message (fromMe) commands: !me, !{botName}, !mimic, !refresh, !ai status, !me -d, !me -s.
  *
  * Flow for ALL commands:
  *   1. Immediately edits the sent command message to "⏳ Processing..."
  *   2. Download commands (!me -d ...):
  *        - Edits to "⏳ Downloading media..." while downloading
  *        - Edits to success/error text after resend
- *   3. AI commands (!me / !{botName}):
+ *   3. Repeat-message commands (!me -s ...):
+ *        - Edits to "⏳ Spamming..." while sending repeated messages
+ *        - Edits to success/error text after completion
+ *   4. AI commands (!me / !{botName}):
  *        - Edits to "⏳ Generating..." while waiting for the AI
  *        - Edits to "✅" once done, then sends the AI reply as new messages
- *   4. Settings commands (!mimic, !ai status, !refresh):
+ *   5. Settings commands (!mimic, !ai status, !refresh):
  *        - Edits directly to the result text
  *
  * NOTE: These commands ALWAYS run regardless of whether the global AI mimic is
@@ -1146,6 +1214,25 @@ async function handleOwnCommand(
       await editOwnMessage(userId, jid, msgKey, resultMessage);
     } catch (e) {
       logger.error("[Command] Media download failed", { userId, contactPhone, error: String(e) });
+      await editOwnMessage(userId, jid, msgKey, `❌ ${String((e as Error)?.message || e)}`);
+    }
+    return;
+  }
+
+  // ── Repeat-message command (!me -s ... -d ...) ───────────────────────────────
+  if (command.type === "spam") {
+    try {
+      const params = parseSpamCommandParams(command, quotedText);
+      await editOwnMessage(
+        userId,
+        jid,
+        msgKey,
+        `⏳ Spamming ${params.count} message(s) every ${params.delaySeconds}s...`
+      );
+      await sendRepeatedTextMessage(userId, jid, params);
+      await editOwnMessage(userId, jid, msgKey, `✅ Sent ${params.count} message(s).`);
+    } catch (e) {
+      logger.error("[Command] Spam command failed", { userId, contactPhone, error: String(e) });
       await editOwnMessage(userId, jid, msgKey, `❌ ${String((e as Error)?.message || e)}`);
     }
     return;

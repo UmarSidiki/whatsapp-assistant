@@ -119,6 +119,7 @@ export async function getSettings(c: Context) {
           geminiModel: "gemini-2.0-flash",
           botName: null,
           customInstructions: null,
+          timezone: "UTC",
         };
       }
 
@@ -132,6 +133,7 @@ export async function getSettings(c: Context) {
         geminiModel: settings.geminiModel,
         botName: settings.botName ?? null,
         customInstructions: settings.customInstructions ?? null,
+        timezone: settings.timezone ?? "UTC",
       };
     } catch (error) {
       logger.error("Failed to get settings", { error: String(error), userId });
@@ -195,6 +197,8 @@ export async function updateSettings(c: Context) {
 
     try {
       const now = new Date();
+      const normalizedTimezone =
+        timezone === undefined ? undefined : timezone === null ? "UTC" : timezone.trim() || "UTC";
       const existing = await db
         .select()
         .from(aiSettings)
@@ -215,7 +219,7 @@ export async function updateSettings(c: Context) {
           geminiModel: geminiModel ?? "gemini-2.0-flash",
           botName: botName ?? null,
           customInstructions: customInstructions ?? null,
-          timezone: timezone ?? "UTC",
+          timezone: normalizedTimezone ?? "UTC",
           createdAt: now,
           updatedAt: now,
         });
@@ -228,7 +232,7 @@ export async function updateSettings(c: Context) {
           geminiModel: geminiModel ?? "gemini-2.0-flash",
           botName: botName ?? null,
           customInstructions: customInstructions ?? null,
-          timezone: timezone ?? "UTC",
+          timezone: normalizedTimezone ?? "UTC",
         };
       } else {
         // Update existing settings
@@ -241,7 +245,7 @@ export async function updateSettings(c: Context) {
         if (geminiModel !== undefined) updateData.geminiModel = geminiModel;
         if (botName !== undefined) updateData.botName = botName;
         if (customInstructions !== undefined) updateData.customInstructions = customInstructions;
-        if (timezone !== undefined) updateData.timezone = timezone;
+        if (normalizedTimezone !== undefined) updateData.timezone = normalizedTimezone;
 
         await db.update(aiSettings).set(updateData).where(eq(aiSettings.userId, userId)).run();
 
@@ -260,20 +264,22 @@ export async function updateSettings(c: Context) {
               fallbackProvider: settings.fallbackProvider ?? undefined,
               groqModel: settings.groqModel,
               fallbackGroqModel: settings.fallbackGroqModel ?? undefined,
-              geminiModel: settings.geminiModel ?? undefined,
-              botName: settings.botName ?? null,
-              customInstructions: settings.customInstructions ?? null,
-            }
-          : {
-              aiEnabled: true,
-              primaryProvider: "groq",
-              fallbackProvider: "gemini",
-              groqModel: "llama-3.1-8b-instant",
-              fallbackGroqModel: "llama-3.1-70b-versatile",
-              geminiModel: "gemini-2.0-flash",
-              botName: null,
-              customInstructions: null,
-            };
+               geminiModel: settings.geminiModel ?? undefined,
+               botName: settings.botName ?? null,
+               customInstructions: settings.customInstructions ?? null,
+               timezone: settings.timezone ?? "UTC",
+             }
+           : {
+               aiEnabled: true,
+               primaryProvider: "groq",
+               fallbackProvider: "gemini",
+               groqModel: "llama-3.1-8b-instant",
+               fallbackGroqModel: "llama-3.1-70b-versatile",
+               geminiModel: "gemini-2.0-flash",
+               botName: null,
+               customInstructions: null,
+               timezone: "UTC",
+             };
       }
 
       return {
