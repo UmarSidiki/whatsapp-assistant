@@ -348,6 +348,7 @@ async function handleAIResponse(
          logger.info(`${tag} Bot explicitly invoked by contact`, { userId, botName });
        }
     }
+    const rawBotPrompt = promptText;
 
     if (forceCommand && aiMode !== "bot") {
       logger.info(`${tag} Command-style message ignored (not bot command)`, { userId });
@@ -371,7 +372,7 @@ async function handleAIResponse(
       promptText = `Replied message: "${quotedText}"\n\nMy question: ${promptText}`;
     }
 
-    const reminderIntent = aiMode === "bot" ? parseReminderIntent(promptText) : null;
+    const reminderIntent = aiMode === "bot" ? parseReminderIntent(rawBotPrompt) : null;
     if (reminderIntent) {
       const scheduled = await addScheduledMessage(
         userId,
