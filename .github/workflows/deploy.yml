@@ -1,0 +1,37 @@
+name: Deploy WhatsApp Assistant
+
+on:
+  push:
+    branches:
+      - main  # or 'master' if that's your branch name
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}       # Your VPS IP
+          username: ubuntu                       # Based on your terminal prompt
+          key: ${{ secrets.DEPLOY }}
+          port: 22
+          script: |
+            cd /var/www/whatsapp-assistant
+            # 1. Update code and build while the old version is still running
+            git pull origin main
+            npm install --production
+            
+            # Run migrations (if applicable)
+            npm run db:migrate
+            
+            # Build (if you are using TypeScript/Next.js/etc)
+            npm run build
+            
+            # 2. Restart the service (only takes a split second of downtime)
+            sudo systemctl restart whatsapp-assistant
+
+            
