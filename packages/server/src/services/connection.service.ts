@@ -164,7 +164,15 @@ export async function init(userId: string): Promise<void> {
       if (msg.key.fromMe) {
         // Handle own-message commands: !me, !mimic, !refresh, !ai status
         if (text.trim().startsWith("!")) {
-          handleOwnCommand(userId, jid, contactPhone, text, msg.key).catch((e) =>
+          // Extract replied-to message text so !me/!{name} can reference it even
+          // when the quoted message is not yet in the context database.
+          const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
+          const quotedText =
+            ctxInfo?.quotedMessage?.conversation ||
+            ctxInfo?.quotedMessage?.extendedTextMessage?.text ||
+            undefined;
+
+          handleOwnCommand(userId, jid, contactPhone, text, msg.key, quotedText).catch((e) =>
             logger.error("Own command handler failed", {
               userId,
               jid,
@@ -394,24 +402,37 @@ async function editOwnMessage(
 
 /**
  * Handle own-message (fromMe) commands: !me, !{botName}, !mimic, !refresh, !ai status.
- * - Immediately edits the sent command message to ⏳
- * - Settings commands (!mimic, !ai status, !refresh): edits message to the result
- * - AI commands (!me, !{botName}): edits to ✅ then sends response as new messages
+ *
+ * Flow for ALL commands:
+ *   1. Immediately edits the sent command message to "⏳ Processing..."
+ *   2. AI commands (!me / !{botName}):
+ *        - Edits to "⏳ Generating..." while waiting for the AI
+ *        - Edits to "✅" once done, then sends the AI reply as new messages
+ *   3. Settings commands (!mimic, !ai status, !refresh):
+ *        - Edits directly to the result text
+ *
+ * NOTE: These commands ALWAYS run regardless of whether the global AI mimic is
+ * enabled or disabled — the owner must always be able to query the AI and tweak
+ * settings from any chat.
+ *
+ * Reply context: when the user replies to a WhatsApp message and sends
+ * !me / !{botName}, the quoted message text (quotedText) is injected into the
+ * AI prompt even if it is not yet stored in the context database.
  */
 async function handleOwnCommand(
   userId: string,
   jid: string,
   contactPhone: string,
   text: string,
-  msgKey: { remoteJid?: string | null; fromMe?: boolean | null; id?: string | null }
+  msgKey: { remoteJid?: string | null; fromMe?: boolean | null; id?: string | null },
+  quotedText?: string
 ): Promise<void> {
-  // Immediately show loading in the command message
-  await editOwnMessage(userId, jid, msgKey, "⏳");
+  // Immediately show a processing indicator in the sent message
+  await editOwnMessage(userId, jid, msgKey, "⏳ Processing...");
 
   let resolvedText = text;
-  let isAICommand = false;
 
-  // Resolve !{botName} → !me for the owner
+  // Resolve !{botName} → !me so the owner can use their custom bot alias
   try {
     const settingsRow = await db
       .select({ botName: aiSettings.botName })
@@ -437,31 +458,38 @@ async function handleOwnCommand(
     return;
   }
 
-  // Determine if this needs AI generation
-  isAICommand = command.type === "explain";
-
-  if (isAICommand) {
-    // Edit to a "generating" state so the user knows AI is working
+  // ── AI explain commands (!me / !{botName}) ──────────────────────────────────
+  if (command.type === "explain") {
     await editOwnMessage(userId, jid, msgKey, "⏳ Generating...");
     try {
-      logger.info("[AI !me] Generating explain response", { userId, contactPhone });
-      const result = await generateResponse(userId, contactPhone, command.content!, "explain");
-      // Edit command message to ✅, then send the AI response as a new message
+      // Build the AI prompt content.
+      // If the user replied to a message, prepend the quoted text so the AI can
+      // reference it even when it is not in the stored conversation history.
+      let aiContent = command.content!;
+      if (quotedText) {
+        aiContent = `Replied message: "${quotedText}"\n\nMy question: ${command.content}`;
+      }
+
+      logger.info("[AI !me] Generating explain response", { userId, contactPhone, hasQuotedText: !!quotedText });
+      const result = await generateResponse(userId, contactPhone, aiContent, "explain");
+
+      // Edit the command message to ✅, then send the AI answer as new message(s)
       await editOwnMessage(userId, jid, msgKey, "✅");
       await sendSegmented(userId, jid, result.response);
       logger.info("[AI !me] Explain response sent", { userId, contactPhone, provider: result.provider });
     } catch (e: any) {
       logger.error("[AI !me] Explain response failed", { userId, contactPhone, error: String(e) });
       const errorMessage = String(e?.message || e);
-      const errText = errorMessage.includes("keys configured") || errorMessage.includes("unavailable")
-        ? `⚠️ AI Error: ${errorMessage}`
-        : "❌ Failed to generate AI response. Check server logs.";
+      const errText =
+        errorMessage.includes("keys configured") || errorMessage.includes("unavailable")
+          ? `⚠️ AI Error: ${errorMessage}`
+          : "❌ Failed to generate AI response. Check server logs.";
       await editOwnMessage(userId, jid, msgKey, errText);
     }
     return;
   }
 
-  // Settings / info commands — execute and edit message to result
+  // ── Settings / info commands (!mimic, !mimic global, !refresh, !ai status) ──
   try {
     const response = await executeCommand(userId, contactPhone, command);
     await editOwnMessage(userId, jid, msgKey, response || "✅ Done");

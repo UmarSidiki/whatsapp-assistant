@@ -49,7 +49,7 @@ export class GroqProvider implements AIProvider {
   private requestTimestamps: number[] = [];
   private readonly RATE_LIMIT_WINDOW = 60000; // 1 minute
   private readonly RATE_LIMIT_THRESHOLD = 30; // ~30 requests per minute
-  private model: string = "mixtral-8x7b-32768";
+  private model: string = "llama-3.1-8b-instant";
   private jsonMode: boolean = false;
 
   constructor(apiKeys: string[], model?: string, jsonMode: boolean = false) {

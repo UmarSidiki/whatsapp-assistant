@@ -77,12 +77,11 @@ interface APITestResult {
 
 const CUSTOM_MODEL_VALUE = "__custom__";
 
-// Comprehensive list of Groq models
+// Chat-capable Groq models (excludes guard/safety classifiers and speech models)
 const GROQ_MODELS = [
   { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B (Fastest)" },
   { id: "llama-3.1-70b-versatile", name: "Llama 3.1 70B (Versatile)" },
   { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B (Versatile)" },
-  { id: "llama-guard-4-12b", name: "Llama Guard 4 12B" },
   {
     id: "meta-llama/llama-4-maverick-17b-128e-instruct",
     name: "Llama 4 Maverick 17B",
@@ -91,11 +90,7 @@ const GROQ_MODELS = [
     id: "meta-llama/llama-4-scout-17b-16e-instruct",
     name: "Llama 4 Scout 17B",
   },
-  {
-    id: "meta-llama/llama-prompt-guard-2-86m",
-    name: "Llama Prompt Guard 2 86M",
-  },
-  { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B 32K (Default)" },
+  { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B 32K" },
   { id: "groq/compound", name: "Groq Compound" },
   { id: "groq/compound-mini", name: "Groq Compound Mini" },
   { id: "moonshotai/kimi-k2-instruct", name: "Kimi K2 Instruct" },
@@ -103,8 +98,6 @@ const GROQ_MODELS = [
   { id: "openai/gpt-oss-120b", name: "GPT OSS 120B" },
   { id: "openai/gpt-oss-20b", name: "GPT OSS 20B" },
   { id: "qwen/qwen3-32b", name: "Qwen3 32B" },
-  { id: "allam-2-7b", name: "Allam 2 7B" },
-  { id: "canopylabs/orpheus-v1-english", name: "Orpheus V1 English" },
 ];
 
 // Gemini models

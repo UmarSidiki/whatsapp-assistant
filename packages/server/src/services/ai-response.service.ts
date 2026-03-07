@@ -1,7 +1,15 @@
 import { createProvider } from "../lib/ai-provider";
 import { getMessageHistory } from "./ai-assistant.service";
-import { getPersona, extractPersona, generatePersonaPrompt } from "./ai-persona.service";
-import { isProviderAvailable, getBestAvailableProvider, trackApiCall } from "./api-usage.service";
+import {
+  getPersona,
+  extractPersona,
+  generatePersonaPrompt,
+} from "./ai-persona.service";
+import {
+  isProviderAvailable,
+  getBestAvailableProvider,
+  trackApiCall,
+} from "./api-usage.service";
 import { logger } from "../lib/logger";
 import { db } from "../db";
 import { aiSettings, apiKeys } from "../db/schema";
@@ -27,7 +35,7 @@ export async function generateResponse(
   contactPhone: string,
   message: string,
   mode: "mimic" | "explain" | "bot",
-  conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>
+  conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>,
 ): Promise<AIResponseResult> {
   if (!userId || !contactPhone || !message.trim()) {
     throw new Error("userId, contactPhone, and message are required");
@@ -39,7 +47,11 @@ export async function generateResponse(
     // Get conversation context if not provided
     let history = conversationHistory;
     if (!history) {
-      const contextMessages = await getConversationContext(userId, contactPhone, 50);
+      const contextMessages = await getConversationContext(
+        userId,
+        contactPhone,
+        50,
+      );
       history = contextMessages;
     }
 
@@ -53,7 +65,7 @@ export async function generateResponse(
         userId,
         contactPhone,
         message,
-        history
+        history,
       );
       response = result.response;
       segments = result.segments;
@@ -63,7 +75,7 @@ export async function generateResponse(
         userId,
         contactPhone,
         message,
-        history
+        history,
       );
       response = result.response;
       provider = result.provider;
@@ -72,7 +84,7 @@ export async function generateResponse(
         userId,
         contactPhone,
         message,
-        history
+        history,
       );
       response = result.response;
       provider = result.provider;
@@ -113,7 +125,7 @@ export async function generateResponse(
 export async function getConversationContext(
   userId: string,
   contactPhone: string,
-  limit: number = 50
+  limit: number = 50,
 ): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
   try {
     const messages = await getMessageHistory(userId, contactPhone, limit);
@@ -121,7 +133,8 @@ export async function getConversationContext(
     const context: Array<{ role: "user" | "assistant"; content: string }> = [];
 
     for (const msg of messages) {
-      const role: "user" | "assistant" = msg.sender === "contact" ? "user" : "assistant";
+      const role: "user" | "assistant" =
+        msg.sender === "contact" ? "user" : "assistant";
       // Merge consecutive messages from the same sender into one entry
       const last = context.length > 0 ? context[context.length - 1] : undefined;
       if (last && last.role === role) {
@@ -167,7 +180,10 @@ export function splitIntoMultipleMessages(response: string): string[] {
       if (!trimmed) continue;
 
       // Check if this part should be combined with the last message
-      if (messages.length > 0 && messages[messages.length - 1].length + trimmed.length < 300) {
+      if (
+        messages.length > 0 &&
+        messages[messages.length - 1].length + trimmed.length < 300
+      ) {
         messages[messages.length - 1] += "\n\n" + trimmed;
       } else {
         messages.push(trimmed);
@@ -251,13 +267,20 @@ async function generateMimicResponse(
   userId: string,
   contactPhone: string,
   message: string,
-  history: Array<{ role: "user" | "assistant"; content: string }>
-): Promise<{ response: string; segments: string[]; provider: "groq" | "gemini" }> {
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+): Promise<{
+  response: string;
+  segments: string[];
+  provider: "groq" | "gemini";
+}> {
   try {
     // Get persona from cache or extract fresh
     let persona = await getPersona(userId, contactPhone);
     if (!persona) {
-      logger.debug("Persona not cached, extracting fresh", { userId, contactPhone });
+      logger.debug("Persona not cached, extracting fresh", {
+        userId,
+        contactPhone,
+      });
       persona = await extractPersona(userId, contactPhone);
     }
 
@@ -273,8 +296,13 @@ async function generateMimicResponse(
       .join("\n");
 
     // Select provider (also fetches customInstructions)
-    const { provider, isPrimary, customInstructions } = await selectProvider(userId);
-    logger.debug("Selected provider for mimic mode", { userId, provider, isPrimary });
+    const { provider, isPrimary, customInstructions } =
+      await selectProvider(userId);
+    logger.debug("Selected provider for mimic mode", {
+      userId,
+      provider,
+      isPrimary,
+    });
 
     // Append custom instructions to the prompt if configured
     const customNote = customInstructions
@@ -304,16 +332,27 @@ If the reply is short (under 100 chars), just use one segment.
 Example: ["Hey!", "I'm doing good, thanks for asking.", "How about you?"]
 Do NOT include any text outside the JSON object.`;
 
-    // Generate response — use JSON mode for Groq to get structured segments
-    const raw = await callAIProvider(userId, provider, fullPrompt, isPrimary, provider === "groq");
+    // Generate response — ask for JSON via prompt; don't enforce API-level JSON mode
+    // as many Groq models (guard, speech, newer) don't support response_format: json_object
+    const raw = await callAIProvider(
+      userId,
+      provider,
+      fullPrompt,
+      isPrimary,
+      false,
+    );
 
-    // Try to parse JSON response (Groq JSON mode), fall back to raw text
+    // Try to parse JSON response, fall back to raw text
     let response: string;
     let segments: string[] = [];
     try {
       const parsed = JSON.parse(raw);
       // Prefer AI-provided segments array — send each as a separate message
-      if (parsed.segments && Array.isArray(parsed.segments) && parsed.segments.length > 0) {
+      if (
+        parsed.segments &&
+        Array.isArray(parsed.segments) &&
+        parsed.segments.length > 0
+      ) {
         segments = (parsed.segments as unknown[])
           .map((s) => String(s).trim())
           .filter(Boolean);
@@ -325,10 +364,6 @@ Do NOT include any text outside the JSON object.`;
       // Not JSON — use raw response (happens with Gemini or non-JSON-mode models)
       response = raw;
     }
-
-    // Track API call
-    const model = provider === "groq" ? (isPrimary ? "llama-3.1-8b-instant" : "llama-3.1-70b-versatile") : "gemini-2.0-flash";
-    await trackApiCall(userId, provider, model);
 
     return { response, segments, provider };
   } catch (error) {
@@ -348,11 +383,12 @@ async function generateExplainResponse(
   userId: string,
   contactPhone: string,
   message: string,
-  history: Array<{ role: "user" | "assistant"; content: string }>
+  history: Array<{ role: "user" | "assistant"; content: string }>,
 ): Promise<{ response: string; provider: "groq" | "gemini" }> {
   try {
     // Simple system prompt for explain mode
-    const systemPrompt = "You are a helpful AI assistant. Provide clear, concise analysis and responses.";
+    const systemPrompt =
+      "You are a helpful AI assistant. Provide clear, concise analysis and responses.";
 
     // Build context from history
     const contextMessages = history
@@ -364,8 +400,13 @@ async function generateExplainResponse(
       .join("\n");
 
     // Select provider (also fetches customInstructions)
-    const { provider, isPrimary, customInstructions } = await selectProvider(userId);
-    logger.debug("Selected provider for explain mode", { userId, provider, isPrimary });
+    const { provider, isPrimary, customInstructions } =
+      await selectProvider(userId);
+    logger.debug("Selected provider for explain mode", {
+      userId,
+      provider,
+      isPrimary,
+    });
 
     const customNote = customInstructions
       ? `\n\nAdditional instruction: ${customInstructions}`
@@ -383,11 +424,13 @@ Message: "${message}"
 Your analysis/response:`;
 
     // Generate response — NO JSON mode for explain (plain text response)
-    const response = await callAIProvider(userId, provider, fullPrompt, isPrimary, false);
-
-    // Track API call
-    const model = provider === "groq" ? (isPrimary ? "llama-3.1-8b-instant" : "llama-3.1-70b-versatile") : "gemini-2.0-flash";
-    await trackApiCall(userId, provider, model);
+    const response = await callAIProvider(
+      userId,
+      provider,
+      fullPrompt,
+      isPrimary,
+      false,
+    );
 
     return { response, provider };
   } catch (error) {
@@ -407,13 +450,16 @@ async function generateBotResponse(
   userId: string,
   contactPhone: string,
   message: string,
-  history: Array<{ role: "user" | "assistant"; content: string }>
+  history: Array<{ role: "user" | "assistant"; content: string }>,
 ): Promise<{ response: string; provider: "groq" | "gemini" }> {
   try {
     // Select provider to get botName and customInstructions
-    const { provider, isPrimary, customInstructions, botName } = await selectProvider(userId);
-    
-    const botIdentity = botName ? `You are an AI assistant answering to the name "${botName}". ` : "You are a helpful AI assistant representing the user. ";
+    const { provider, isPrimary, customInstructions, botName } =
+      await selectProvider(userId);
+
+    const botIdentity = botName
+      ? `You are an AI assistant answering to the name "${botName}". `
+      : "You are a helpful AI assistant representing the user. ";
     const systemPrompt = `${botIdentity}A contact on WhatsApp is talking to you directly. Please answer their query helpfully and concisely.`;
 
     // Build context from history
@@ -438,10 +484,13 @@ Contact's Message: "${message}"
 
 Your helpful response (keep it brief and natural for WhatsApp):`;
 
-    const response = await callAIProvider(userId, provider, fullPrompt, isPrimary, false);
-
-    const model = provider === "groq" ? (isPrimary ? "llama-3.1-8b-instant" : "llama-3.1-70b-versatile") : "gemini-2.0-flash";
-    await trackApiCall(userId, provider, model);
+    const response = await callAIProvider(
+      userId,
+      provider,
+      fullPrompt,
+      isPrimary,
+      false,
+    );
 
     return { response, provider };
   } catch (error) {
@@ -485,14 +534,31 @@ async function selectProvider(userId: string): Promise<{
     // Try primary provider
     const primaryAvailable = await isProviderAvailable(userId, primaryProvider);
     if (primaryAvailable) {
-      return { provider: primaryProvider, isPrimary: true, customInstructions, botName };
+      return {
+        provider: primaryProvider,
+        isPrimary: true,
+        customInstructions,
+        botName,
+      };
     }
 
     // Try fallback
-    const fallbackAvailable = await isProviderAvailable(userId, fallbackProvider);
+    const fallbackAvailable = await isProviderAvailable(
+      userId,
+      fallbackProvider,
+    );
     if (fallbackAvailable) {
-      logger.info("Primary provider unavailable, switching to fallback", { userId, primaryProvider, fallbackProvider });
-      return { provider: fallbackProvider, isPrimary: false, customInstructions, botName };
+      logger.info("Primary provider unavailable, switching to fallback", {
+        userId,
+        primaryProvider,
+        fallbackProvider,
+      });
+      return {
+        provider: fallbackProvider,
+        isPrimary: false,
+        customInstructions,
+        botName,
+      };
     }
 
     // Both unavailable
@@ -513,10 +579,15 @@ export async function callAIProvider(
   provider: "groq" | "gemini",
   prompt: string,
   isPrimary: boolean = true,
-  jsonMode: boolean = false
+  jsonMode: boolean = false,
 ): Promise<string> {
   try {
-    logger.info("[callAIProvider] Starting", { userId, provider, isPrimary, jsonMode });
+    logger.info("[callAIProvider] Starting", {
+      userId,
+      provider,
+      isPrimary,
+      jsonMode,
+    });
 
     // Get user's DB-stored API keys only (per-account isolation)
     const dbKeys = await db
@@ -527,10 +598,16 @@ export async function callAIProvider(
     const allKeys = dbKeys.map((k) => k.keyValue).filter(Boolean);
 
     if (allKeys.length === 0) {
-      throw new Error(`No API keys configured for ${provider}. Add keys in AI Assistant settings.`);
+      throw new Error(
+        `No API keys configured for ${provider}. Add keys in AI Assistant settings.`,
+      );
     }
 
-    logger.info("[callAIProvider] Found API keys", { userId, provider, keyCount: allKeys.length });
+    logger.info("[callAIProvider] Found API keys", {
+      userId,
+      provider,
+      keyCount: allKeys.length,
+    });
 
     // Get user settings to retrieve the model
     let model: string | undefined;
@@ -547,23 +624,48 @@ export async function callAIProvider(
         .limit(1);
 
       if (provider === "groq") {
-        model = !isPrimary && userSettings[0]?.fallbackGroqModel
-          ? userSettings[0].fallbackGroqModel
-          : (userSettings[0]?.groqModel || "llama-3.1-8b-instant");
+        model =
+          !isPrimary && userSettings[0]?.fallbackGroqModel
+            ? userSettings[0].fallbackGroqModel
+            : userSettings[0]?.groqModel || "llama-3.1-8b-instant";
       } else {
         model = userSettings[0]?.geminiModel || "gemini-2.0-flash";
       }
     } catch (error) {
-      logger.warn("Failed to fetch model from settings, using default", { userId, provider, error: String(error) });
+      logger.warn("Failed to fetch model from settings, using default", {
+        userId,
+        provider,
+        error: String(error),
+      });
       model = provider === "groq" ? "llama-3.1-8b-instant" : "gemini-2.0-flash";
     }
 
-    logger.info("[callAIProvider] Using model", { userId, provider, model, jsonMode });
+    logger.info("[callAIProvider] Using model", {
+      userId,
+      provider,
+      model,
+      jsonMode,
+    });
 
     const aiProvider = createProvider(provider, allKeys, model, jsonMode);
     const response = await aiProvider.generateResponse(prompt);
 
-    logger.info("[callAIProvider] Success", { provider, model, responseLength: response.length });
+    logger.info("[callAIProvider] Success", {
+      provider,
+      model,
+      responseLength: response.length,
+    });
+
+    // Track API call with the actual model used
+    await trackApiCall(userId, provider, model!).catch((e) =>
+      logger.warn("[callAIProvider] Failed to track API call", {
+        userId,
+        provider,
+        model,
+        error: String(e),
+      }),
+    );
+
     return response;
   } catch (error) {
     logger.error("[callAIProvider] Failed", { error: String(error), provider });
@@ -579,14 +681,17 @@ export async function callAIProvider(
 export async function generatePersonaAIDescription(
   userId: string,
   contactPhone: string,
-  messageHistory: Array<{ message: string; sender: "me" | "contact" }>
+  messageHistory: Array<{ message: string; sender: "me" | "contact" }>,
 ): Promise<string | null> {
   try {
     const userMessages = messageHistory.filter((m) => m.sender === "me");
     if (userMessages.length < 5) return null;
 
     // Build a sample of messages for analysis (up to 80 from user + 20 from contact for context)
-    const sampleMe = userMessages.slice(-80).map((m) => `[Me]: ${m.message}`).join("\n");
+    const sampleMe = userMessages
+      .slice(-80)
+      .map((m) => `[Me]: ${m.message}`)
+      .join("\n");
     const sampleContact = messageHistory
       .filter((m) => m.sender === "contact")
       .slice(-20)
@@ -618,14 +723,21 @@ Output ONLY the description, no headers or extra text.`;
       const { provider, isPrimary } = await selectProvider(userId);
       return callAIProvider(userId, provider, prompt, isPrimary, false);
     })();
-    logger.info("AI persona description generated", { userId, contactPhone, length: description.length });
-    return description;
-  } catch (error) {
-    logger.warn("Failed to generate AI persona description (will use rule-based fallback)", {
+    logger.info("AI persona description generated", {
       userId,
       contactPhone,
-      error: String(error),
+      length: description.length,
     });
+    return description;
+  } catch (error) {
+    logger.warn(
+      "Failed to generate AI persona description (will use rule-based fallback)",
+      {
+        userId,
+        contactPhone,
+        error: String(error),
+      },
+    );
     return null;
   }
 }
