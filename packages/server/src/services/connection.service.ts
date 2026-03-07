@@ -176,17 +176,112 @@ interface ParsedReminderIntent {
 
 function parseReminderIntent(input: string, now: Date = new Date()): ParsedReminderIntent | null {
   const trimmed = input.trim().replace(/\s+/g, " ");
-  const match = trimmed.match(/^remind me to\s+(.+?)\s+at\s+(.+)$/i);
-  if (!match) return null;
+  const relativeIntent = parseRelativeReminderIntent(trimmed, now);
+  if (relativeIntent) {
+    return relativeIntent;
+  }
 
-  const task = (match[1] ?? "").trim().replace(/[.!?]+$/, "");
-  const timeText = (match[2] ?? "").trim().replace(/[.!?]+$/, "");
+  const absoluteMatch = trimmed.match(/^remind me to\s+(.+?)\s+at\s+(.+)$/i);
+  if (!absoluteMatch) return null;
+
+  const task = normalizeReminderTask(absoluteMatch[1] ?? "");
+  const timeText = (absoluteMatch[2] ?? "").trim().replace(/[.!?]+$/, "");
   if (!task || !timeText) return null;
 
   const scheduledAt = parseReminderDateTime(timeText, now);
   if (!scheduledAt) return null;
 
   return { task, scheduledAt };
+}
+
+function parseRelativeReminderIntent(input: string, now: Date): ParsedReminderIntent | null {
+  const patterns: Array<{
+    pattern: RegExp;
+    amountIndex: number;
+    unitIndex: number;
+    taskIndex: number;
+  }> = [
+    {
+      // Example: "remind me to pay bill in 5 minutes"
+      pattern:
+        /^remind me to\s+(.+?)\s+in\s+(\d+)\s*(seconds?|secs?|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|day|d|din|ghanta|ghante)\.?$/i,
+      amountIndex: 2,
+      unitIndex: 3,
+      taskIndex: 1,
+    },
+    {
+      // Example: "remind me in 5 minutes to pay bill"
+      pattern:
+        /^remind me in\s+(\d+)\s*(seconds?|secs?|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|day|d|din|ghanta|ghante)\s+to\s+(.+?)\.?$/i,
+      amountIndex: 1,
+      unitIndex: 2,
+      taskIndex: 3,
+    },
+    {
+      // Example: "5 minute baad mujhe lights band karne ki yaad dilaana"
+      pattern:
+        /^(\d+)\s*(seconds?|secs?|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|day|d|din|ghanta|ghante)\s+baad\s+(?:mujhe\s+)?(.+?)\s+yaad\s+dila(?:\s+de)?(?:na|ana|do|dena|diji(?:ye|ega))\.?$/i,
+      amountIndex: 1,
+      unitIndex: 2,
+      taskIndex: 3,
+    },
+    {
+      // Example: "mujhe lights band karna 5 minute baad yaad dilaana"
+      pattern:
+        /^(?:mujhe\s+)?(.+?)\s+(\d+)\s*(seconds?|secs?|s|minutes?|mins?|min|m|hours?|hrs?|hr|h|days?|day|d|din|ghanta|ghante)\s+baad\s+yaad\s+dila(?:\s+de)?(?:na|ana|do|dena|diji(?:ye|ega))\.?$/i,
+      amountIndex: 2,
+      unitIndex: 3,
+      taskIndex: 1,
+    },
+  ];
+
+  for (const patternDef of patterns) {
+    const match = input.match(patternDef.pattern);
+    if (!match) {
+      continue;
+    }
+
+    const amount = Number(match[patternDef.amountIndex] ?? "");
+    if (!Number.isFinite(amount) || amount <= 0) {
+      continue;
+    }
+
+    const unitMs = parseReminderUnitMs((match[patternDef.unitIndex] ?? "").toLowerCase());
+    if (!unitMs) {
+      continue;
+    }
+
+    const task = normalizeReminderTask(match[patternDef.taskIndex] ?? "");
+    if (!task) {
+      continue;
+    }
+
+    const scheduledAt = new Date(now.getTime() + amount * unitMs);
+    if (scheduledAt.getTime() <= now.getTime()) {
+      continue;
+    }
+
+    return { task, scheduledAt };
+  }
+
+  return null;
+}
+
+function parseReminderUnitMs(unit: string): number | null {
+  if (/^(second|seconds|sec|secs|s)$/.test(unit)) return 1000;
+  if (/^(minute|minutes|min|mins|m)$/.test(unit)) return 60 * 1000;
+  if (/^(hour|hours|hr|hrs|h|ghanta|ghante)$/.test(unit)) return 60 * 60 * 1000;
+  if (/^(day|days|d|din)$/.test(unit)) return 24 * 60 * 60 * 1000;
+  return null;
+}
+
+function normalizeReminderTask(task: string): string {
+  return task
+    .trim()
+    .replace(/[.!?]+$/, "")
+    .replace(/\s+/g, " ")
+    .replace(/\b(ki|ko|ke|kay|please)\s*$/i, "")
+    .trim();
 }
 
 function parseReminderDateTime(input: string, now: Date): Date | null {

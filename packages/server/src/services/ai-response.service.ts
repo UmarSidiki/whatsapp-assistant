@@ -258,6 +258,108 @@ export function splitIntoMultipleMessages(response: string): string[] {
   return messages.length > 0 ? messages : [response];
 }
 
+function extractResponseFromJsonPayload(raw: string): string | null {
+  const candidates: string[] = [raw];
+  const objectBlockMatch = raw.match(/\{[\s\S]*\}/);
+  if (objectBlockMatch?.[0]) {
+    candidates.push(objectBlockMatch[0]);
+  }
+
+  const responseKeys = [
+    "response",
+    "reply",
+    "finalResponse",
+    "final_response",
+    "answer",
+    "output",
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (!parsed || typeof parsed !== "object") {
+        continue;
+      }
+      const record = parsed as Record<string, unknown>;
+      for (const key of responseKeys) {
+        const value = record[key];
+        if (typeof value === "string" && value.trim()) {
+          return value.trim();
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function extractResponseFromLabeledText(raw: string): string | null {
+  const quotedMatch = raw.match(
+    /(?:roman\s*urdu\s*)?(?:final\s*)?(?:response|reply|answer)[^"'`\u201c\u201d]*["'\u201c]([^"\u201d]+)["'\u201d]/i,
+  );
+  if (quotedMatch?.[1]?.trim()) {
+    return quotedMatch[1].trim();
+  }
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const labelMatch = line.match(
+      /^(?:roman\s*urdu\s*)?(?:final\s*)?(?:response|reply|answer)\s*[:\-]\s*(.+)$/i,
+    );
+    if (labelMatch?.[1]?.trim()) {
+      return labelMatch[1].trim().replace(/^["'\u201c]+|["'\u201d]+$/g, "").trim();
+    }
+  }
+
+  return null;
+}
+
+function normalizeExplainOutput(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return raw;
+  }
+
+  const fromJson = extractResponseFromJsonPayload(trimmed);
+  if (fromJson) {
+    return fromJson;
+  }
+
+  const fromLabel = extractResponseFromLabeledText(trimmed);
+  if (fromLabel) {
+    return fromLabel;
+  }
+
+  const looksLikeStructuredAnalysis = /(analysis|user\s+ne\s+kaha|ai\s+ko\s+chahiye|roman\s*urdu\s*response)/i.test(trimmed);
+  if (!looksLikeStructuredAnalysis) {
+    return trimmed;
+  }
+
+  const quotedSnippets = Array.from(trimmed.matchAll(/["\u201c]([^"\u201d\n]{3,})["\u201d]/g))
+    .map((match) => (match[1] ?? "").trim())
+    .filter(Boolean);
+  if (quotedSnippets.length > 0) {
+    return quotedSnippets[quotedSnippets.length - 1];
+  }
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^(analysis|user\s+ne\s+kaha|ai\s+ko\s+chahiye)\b/i.test(line));
+  if (lines.length > 0) {
+    return lines[lines.length - 1];
+  }
+
+  return trimmed;
+}
+
 // ─── Private Functions ────────────────────────────────────────────────────────
 
 /**
@@ -386,9 +488,9 @@ async function generateExplainResponse(
   history: Array<{ role: "user" | "assistant"; content: string }>,
 ): Promise<{ response: string; provider: "groq" | "gemini" }> {
   try {
-    // Simple system prompt for explain mode
+    // Keep explain mode output directly usable for WhatsApp replies.
     const systemPrompt =
-      "You are a helpful AI assistant. Provide clear, concise analysis and responses.";
+      "You are a helpful AI assistant. Return only the final user-facing reply text, with no analysis or headings.";
 
     // Build context from history
     const contextMessages = history
@@ -415,13 +517,13 @@ async function generateExplainResponse(
     // Build full prompt
     const fullPrompt = `${systemPrompt}${customNote}
 
-Help me understand or respond to this message. Be clear and concise.
+Help me respond to this message in a natural way.
 
 ${contextMessages ? `Context:\n${contextMessages}\n` : ""}
 
 Message: "${message}"
 
-Your analysis/response:`;
+Return only the response text the user should send. Do not include labels like "Analysis", "Reasoning", or "Response".`;
 
     // Generate response — NO JSON mode for explain (plain text response)
     const response = await callAIProvider(
@@ -432,7 +534,8 @@ Your analysis/response:`;
       false,
     );
 
-    return { response, provider };
+    const normalizedResponse = normalizeExplainOutput(response);
+    return { response: normalizedResponse || response.trim(), provider };
   } catch (error) {
     logger.error("Failed to generate explain response", {
       error: String(error),
