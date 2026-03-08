@@ -187,6 +187,9 @@ export const aiApiUsage = sqliteTable("ai_api_usage", {
   provider: text("provider", { enum: ["groq", "gemini"] }).notNull(),
   model: text("model").notNull(),
   callCount: integer("callCount").notNull().default(0),
+  // Dynamic limits from headers
+  estimatedLimit: integer("estimatedLimit"), 
+  estimatedRemaining: integer("estimatedRemaining"),
   resetAt: integer("resetAt", { mode: "timestamp" }).notNull(),
   timestamp: integer("timestamp", { mode: "timestamp" }).notNull(),
 }, (t) => [

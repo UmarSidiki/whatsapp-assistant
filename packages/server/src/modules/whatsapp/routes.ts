@@ -17,6 +17,7 @@ router.use("/*", requireAuth);
 router.post("/init", connection.initConnection);
 router.get("/status", connection.getStatus);
 router.post("/disconnect", connection.disconnect);
+router.get("/stats", stats.getStats);
 
 // Single message
 router.post("/send", message.sendMessage);

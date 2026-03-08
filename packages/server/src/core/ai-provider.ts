@@ -23,8 +23,12 @@ export interface AIProvider {
 
   /**
    * Generate a response from the AI model
+   * Returns the generated text along with optional rate limit metadata headers
    */
-  generateResponse(prompt: string, context?: string): Promise<string>;
+  generateResponse(prompt: string, context?: string): Promise<{
+    text: string;
+    headers?: Record<string, string>;
+  }>;
 
   /**
    * Check if the provider is under rate limit
@@ -73,7 +77,10 @@ export class GroqProvider implements AIProvider {
   /**
    * Generate a response using Groq API with streaming
    */
-  async generateResponse(prompt: string, context?: string): Promise<string> {
+  async generateResponse(
+    prompt: string,
+    context?: string,
+  ): Promise<{ text: string; headers?: Record<string, string> }> {
     if (!await this.checkRateLimit()) {
       throw new ProviderError("Rate limit exceeded for Groq provider", 429);
     }
@@ -113,10 +120,11 @@ export class GroqProvider implements AIProvider {
         requestBody.response_format = { type: "json_object" };
       }
 
-      const message = await client.chat.completions.create(requestBody as any);
+      // Use withResponse() to get raw HTTP response exposing headers
+      const { data, response: rawResponse } = await client.chat.completions.create(requestBody as any).withResponse();
 
       // Extract text from OpenAI-compatible response
-      const response = message.choices[0]?.message?.content ?? "";
+      const response = data.choices[0]?.message?.content ?? "";
 
       // Track request for rate limiting
       this.requestTimestamps.push(Date.now());
@@ -125,7 +133,13 @@ export class GroqProvider implements AIProvider {
       this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
 
       logger.debug("Groq API response generated successfully");
-      return response;
+      
+      const headersObject: Record<string, string> = {};
+      rawResponse.headers.forEach((value: string, key: string) => {
+        headersObject[key.toLowerCase()] = value;
+      });
+
+      return { text: response, headers: headersObject };
     } catch (error) {
       if (error instanceof ProviderError) {
         throw error;
@@ -200,7 +214,10 @@ export class GeminiProvider implements AIProvider {
   /**
    * Generate a response using Gemini API
    */
-  async generateResponse(prompt: string, context?: string): Promise<string> {
+  async generateResponse(
+    prompt: string,
+    context?: string,
+  ): Promise<{ text: string; headers?: Record<string, string> }> {
     if (!await this.checkRateLimit()) {
       throw new ProviderError("Rate limit exceeded for Gemini provider", 429);
     }
@@ -245,7 +262,7 @@ export class GeminiProvider implements AIProvider {
       this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
 
       logger.debug("Gemini API response generated successfully");
-      return response;
+      return { text: response };
     } catch (error) {
       if (error instanceof ProviderError) {
         throw error;

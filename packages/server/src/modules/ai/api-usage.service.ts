@@ -2,7 +2,7 @@ import { db } from "../../database";
 import { aiApiUsage } from "../../database/schema";
 import { logger } from "../../core/logger";
 import { ProviderError } from "../../core/ai-provider";
-import { eq, and, gt, lt, count } from "drizzle-orm";
+import { eq, and, gt, lt, count, max, min } from "drizzle-orm";
 
 // ─── Rate Limit Configuration ─────────────────────────────────────────────
 
@@ -61,7 +61,8 @@ async function cleanupOldEntries(): Promise<void> {
 export async function trackApiCall(
   userId: string,
   provider: "groq" | "gemini",
-  model: string
+  model: string,
+  headers?: Record<string, string>
 ): Promise<void> {
   if (!userId) throw new Error("userId is required");
   if (!provider) throw new Error("provider is required");
@@ -69,7 +70,33 @@ export async function trackApiCall(
 
   try {
     const now = new Date();
-    const resetAt = new Date(now.getTime() + RATE_LIMIT_WINDOW_MS);
+    let resetAt = new Date(now.getTime() + RATE_LIMIT_WINDOW_MS);
+    let estimatedLimit: number | undefined;
+    let estimatedRemaining: number | undefined;
+
+    if (headers) {
+      if (provider === "groq") {
+        // Look for x-ratelimit-limit-requests or tokens
+        const groqLimit = headers["x-ratelimit-limit-requests"];
+        const groqRemaining = headers["x-ratelimit-remaining-requests"];
+        const groqReset = headers["x-ratelimit-reset-requests"];
+        
+        if (groqLimit) estimatedLimit = parseInt(groqLimit, 10);
+        if (groqRemaining) estimatedRemaining = parseInt(groqRemaining, 10);
+        if (groqReset) {
+          // groqReset is usually something like "14.2s" or "32ms"
+          const match = String(groqReset).match(/([\d.]+)(s|ms)/);
+          if (match) {
+            const val = parseFloat(match[1]);
+            const unit = match[2];
+            const ms = unit === "s" ? val * 1000 : val;
+            resetAt = new Date(now.getTime() + ms);
+          }
+        }
+      }
+      // Note: Gemini rate limits are tracked globally in Google Cloud Console,
+      // and their REST API often does not return standardized rate limit headers in the 200 OK.
+    }
 
     await db.insert(aiApiUsage).values({
       id: crypto.randomUUID(),
@@ -77,6 +104,8 @@ export async function trackApiCall(
       provider,
       model,
       callCount: 1,
+      estimatedLimit,
+      estimatedRemaining,
       resetAt,
       timestamp: now,
     });
@@ -116,9 +145,13 @@ export async function isProviderAvailable(
       .where(and(eq(aiApiUsage.userId, userId), lt(aiApiUsage.resetAt, now)))
       .run();
 
-    // Count calls in the last 60 seconds
+    // Count calls and get the most recently seen API limit
     const result = await db
-      .select({ calls: count() })
+      .select({ 
+        calls: count(),
+        maxEstimatedLimit: max(aiApiUsage.estimatedLimit),
+        latestRemaining: min(aiApiUsage.estimatedRemaining)
+      })
       .from(aiApiUsage)
       .where(
         and(
@@ -130,16 +163,23 @@ export async function isProviderAvailable(
       .execute();
 
     const callCount = result[0]?.calls ?? 0;
-    const limit = RATE_LIMITS[provider];
-    const isAvailable = callCount < limit;
+    // Base the limit on the actual provided header limit, or fallback to default hardcoded config if API hasn't returned it yet
+    const limit = result[0]?.maxEstimatedLimit ?? RATE_LIMITS[provider];
+    
+    // If we have a direct remaining count from the API (like Groq), trust it over our local DB count (when nearing 0)
+    // We add a safety buffer of 2 requests
+    const latestRemaining = result[0]?.latestRemaining;
+    const remaining = latestRemaining === null ? undefined : latestRemaining;
+    const isAvailable = remaining !== undefined ? remaining > 2 : callCount < limit;
 
     // Log warning if approaching limit
-    if (isAvailable && callCount >= limit * WARNING_THRESHOLD) {
-      const percentageUsed = (callCount / limit) * 100;
+    if (isAvailable && (remaining !== undefined ? remaining <= limit * (1 - WARNING_THRESHOLD) : callCount >= limit * WARNING_THRESHOLD)) {
+      const percentageUsed = remaining !== undefined ? ((limit - remaining) / limit) * 100 : (callCount / limit) * 100;
       logger.warn("Rate limit warning: approaching limit", {
         userId,
         provider,
         callCount,
+        remaining,
         limit,
         percentageUsed: percentageUsed.toFixed(1),
       });

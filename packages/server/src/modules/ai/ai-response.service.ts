@@ -747,16 +747,16 @@ export async function callAIProvider(
     });
 
     const aiProvider = createProvider(provider, allKeys, model, jsonMode);
-    const response = await aiProvider.generateResponse(prompt);
+    const { text, headers } = await aiProvider.generateResponse(prompt);
 
     logger.info("[callAIProvider] Success", {
       provider,
       model,
-      responseLength: response.length,
+      responseLength: text.length,
     });
 
-    // Track API call with the actual model used
-    await trackApiCall(userId, provider, model!).catch((e) =>
+    // Track API call with the actual model used and raw headers
+    await trackApiCall(userId, provider, model!, headers).catch((e) =>
       logger.warn("[callAIProvider] Failed to track API call", {
         userId,
         provider,
@@ -765,7 +765,7 @@ export async function callAIProvider(
       }),
     );
 
-    return response;
+    return text;
   } catch (error) {
     logger.error("[callAIProvider] Failed", { error: String(error), provider });
     throw error;
