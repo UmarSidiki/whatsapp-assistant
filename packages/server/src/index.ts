@@ -1,17 +1,14 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { auth } from './lib/auth'
-import { whatsappRouter } from './routes/whatsapp'
-import { aiRouter } from './routes/ai'
-import { logger } from './lib/logger'
+import { auth } from './core/auth'
+import { whatsappRouter } from './modules/whatsapp/routes'
+import { aiRouter } from './modules/ai/routes'
+import { logger } from './core/logger'
 import inviteCodes from './config/invite-codes.json'
-import { restoreScheduledMessages } from './services/schedule.service'
-import { autoReconnectAll } from './services/connection.service'
+import { restoreScheduledMessages } from './modules/scheduling/schedule.service'
+import { autoReconnectAll } from './modules/whatsapp/wa-connection.service'
 
 const app = new Hono()
-
-// Restore scheduled messages from DB on startup
-restoreScheduledMessages().catch(e => logger.error("Failed to restore scheduled messages", e))
 
 // Auto-reconnect all WhatsApp sessions from stored auth
 autoReconnectAll().catch(e => logger.error("Failed to auto-reconnect WhatsApp sessions", e))

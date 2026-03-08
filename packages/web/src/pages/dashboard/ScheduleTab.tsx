@@ -89,14 +89,25 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
     // Load timezone from AI settings
     fetch(`${apiUrl}/api/ai/settings`, { credentials: "include" })
       .then((r) => r.json())
-      .then((data) => {
+      .then((data: any) => {
         if (data.timezone) {
           // Timezone is stored as offset string like "+05:30" or "-08:00"
-          const offset = parseFloat(data.timezone) * 60;
-          setTimezoneOffset(offset);
+          const tzStr = data.timezone;
+          const match = tzStr.match(/^([+-])?(\d{1,2}):?(\d{2})?$/);
+          if (match) {
+            const sign = match[1] === '-' ? -1 : 1;
+            const hours = parseInt(match[2] || "0", 10);
+            const minutes = parseInt(match[3] || "0", 10);
+            const offset = sign * (hours * 60 + minutes);
+            setTimezoneOffset(offset);
+          } else {
+            // fallback
+            setTimezoneOffset(parseFloat(tzStr) * 60 || 0);
+          }
         }
       })
       .catch(() => {});
+
 
     const interval = setInterval(load, 10_000);
     return () => clearInterval(interval);
@@ -115,7 +126,7 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
     });
     setLoading(false);
     if (!res.ok) {
-      const data = await res.json();
+      const data: any = await res.json();
       return setError(data.error ?? "Failed to schedule");
     }
     setPhone(""); setMessage(""); setScheduledAt("");
@@ -169,7 +180,7 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="s-phone">Phone number</Label>
-              <Input id="s-phone" placeholder="+1234567890" value={phone} onChange={e => setPhone(e.target.value)} />
+              <Input id="s-phone" placeholder="+1234567890" value={phone} onChange={(e: any) => setPhone(e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="s-time">Schedule date & time</Label>
@@ -178,14 +189,14 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
                 type="datetime-local"
                 min={minDateTime()}
                 value={scheduledAt}
-                onChange={e => setScheduledAt(e.target.value)}
+                onChange={(e: any) => setScheduledAt(e.target.value)}
               />
             </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="s-msg">Message</Label>
             {templates.length > 0 && (
-              <Select onValueChange={(id) => {
+              <Select onValueChange={(id: string) => {
                 const t = templates.find((t) => t.id === id);
                 if (t) setMessage(t.content);
               }}>
@@ -201,7 +212,7 @@ export function ScheduleTab({ apiUrl }: { apiUrl: string }) {
                 </SelectContent>
               </Select>
             )}
-            <Textarea id="s-msg" placeholder="Type your message…" rows={4} value={message} onChange={e => setMessage(e.target.value)} />
+            <Textarea id="s-msg" placeholder="Type your message…" rows={4} value={message} onChange={(e: any) => setMessage(e.target.value)} />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button onClick={handleSchedule} disabled={loading}>

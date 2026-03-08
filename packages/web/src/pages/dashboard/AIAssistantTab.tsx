@@ -1584,7 +1584,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
               <strong>Once-view media download:</strong> first reply to the once-view photo/video, then send <code className="bg-muted px-1 rounded">!me -d -here</code> to keep it in the current chat or <code className="bg-muted px-1 rounded">!me -d -n {"{number}"}</code> to send it to another number.
             </p>
             <p>
-              <strong>Repeat message setup:</strong> send <code className="bg-muted px-1 rounded">!me -s {"{count}"} -d {"{seconds}"} - {"{message}"}</code> (or <code className="bg-muted px-1 rounded">!{settings.botName || "yourBotName"} -s {"{count}"} -d {"{seconds}"} - {"{message}"}</code>) to repeat a text with delay. You can also reply to a text and run <code className="bg-muted px-1 rounded">!me -s {"{count}"} -d {"{seconds}"}</code>.
+              <strong>Repeat message setup:</strong> send <code className="bg-muted px-1 rounded">!me -s {"{count}"} -d {"{seconds}"} {"{message}"}</code> (or <code className="bg-muted px-1 rounded">!{settings.botName || "yourBotName"} -s {"{count}"} -d {"{seconds}"} {"{message}"}</code>) to repeat a text with delay. You can also reply to a text and run <code className="bg-muted px-1 rounded">!me -s {"{count}"} -d {"{seconds}"}</code>.
             </p>
           </div>
           <p className="text-xs text-muted-foreground">
