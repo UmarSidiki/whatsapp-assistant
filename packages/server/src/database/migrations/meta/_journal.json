@@ -43,6 +43,13 @@
       "when": 1772930978618,
       "tag": "0005_clear_molecule_man",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1773327422227,
+      "tag": "0006_tough_silverclaw",
+      "breakpoints": true
     }
   ]
 }

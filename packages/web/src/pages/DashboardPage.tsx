@@ -10,6 +10,7 @@ import {
   Menu,
   LogOut,
   Zap,
+  Workflow,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -28,8 +29,9 @@ import { ScheduleTab } from "./dashboard/ScheduleTab";
 import { AutoReplyTab } from "./dashboard/AutoReplyTab";
 import { TemplatesTab } from "./dashboard/TemplatesTab";
 import { AIAssistantTab } from "./dashboard/AIAssistantTab";
+import { FlowBuilderTab } from "./dashboard/FlowBuilderTab";
 
-type Page = "overview" | "connection" | "bulk" | "schedule" | "auto-reply" | "templates" | "ai-assistant";
+type Page = "overview" | "connection" | "bulk" | "schedule" | "auto-reply" | "flow-builder" | "templates" | "ai-assistant";
 
 const NAV_ITEMS: { id: Page; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -37,6 +39,7 @@ const NAV_ITEMS: { id: Page; label: string; icon: React.ComponentType<{ classNam
   { id: "bulk", label: "Bulk Messages", icon: Send },
   { id: "schedule", label: "Schedule", icon: CalendarClock },
   { id: "auto-reply", label: "Auto Reply", icon: MessageSquareReply },
+  { id: "flow-builder", label: "Flow Builder", icon: Workflow },
   { id: "templates", label: "Templates", icon: FileText },
   { id: "ai-assistant", label: "AI Assistant", icon: Zap },
 ];
@@ -47,6 +50,7 @@ const PAGE_TITLES: Record<Page, string> = {
   bulk: "Bulk Messages",
   schedule: "Schedule",
   "auto-reply": "Auto Reply",
+  "flow-builder": "Flow Builder",
   templates: "Templates",
   "ai-assistant": "AI Assistant",
 };
@@ -157,6 +161,7 @@ export default function DashboardPage() {
             {activePage === "bulk" && <BulkMessagesTab apiUrl={apiUrl} />}
             {activePage === "schedule" && <ScheduleTab apiUrl={apiUrl} />}
             {activePage === "auto-reply" && <AutoReplyTab apiUrl={apiUrl} />}
+            {activePage === "flow-builder" && <FlowBuilderTab apiUrl={apiUrl} />}
             {activePage === "templates" && <TemplatesTab apiUrl={apiUrl} />}
             {activePage === "ai-assistant" && <AIAssistantTab apiUrl={apiUrl} />}
           </div>

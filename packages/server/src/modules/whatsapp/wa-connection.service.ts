@@ -1,4 +1,5 @@
 import { handleOwnCommand, handleAIResponse, OwnCommandContext } from "../messaging/incoming-message.service";
+import { executeFlows } from "../flow/flow.service";
 import makeWASocket, {
   downloadMediaMessage,
   extractMessageContent,
@@ -339,7 +340,11 @@ export async function init(userId: string): Promise<void> {
           // Buffer rapid incoming messages, then run the full AI flow
           const bufferKey = `${userId}_${contactPhone}`;
           bufferIncomingMessage(bufferKey, text, async (combinedText) => {
-            // Auto-reply takes priority — skip AI if a rule matched
+            // Chatbot flows take highest priority
+            const flowMatched = await executeFlows(userId, jid, combinedText);
+            if (flowMatched) return;
+
+            // Auto-reply takes priority over AI
             const autoReplied = await handleAutoReply(userId, jid, combinedText);
             if (!autoReplied) {
               await handleAIResponse(userId, jid, contactPhone, combinedText, { quotedText });

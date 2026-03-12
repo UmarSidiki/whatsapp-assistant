@@ -58,7 +58,7 @@ export const verification = sqliteTable("verification", {
 export const messageLog = sqliteTable("message_log", {
   id: text("id").primaryKey(),
   userId: text("userId").references(() => user.id),
-  type: text("type", { enum: ["single", "bulk", "scheduled", "auto_reply", "ai"] }).notNull(),
+  type: text("type", { enum: ["single", "bulk", "scheduled", "auto_reply", "ai", "flow"] }).notNull(),
   phone: text("phone").notNull(),
   message: text("message").notNull(),
   status: text("status", { enum: ["sent", "failed"] }).notNull(),
@@ -176,6 +176,27 @@ export const apiKeys = sqliteTable("api_keys", {
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
 }, (t) => [
   index("api_keys_user_provider_idx").on(t.userId, t.provider),
+]);
+
+// ─── Chatbot Flow Tables ──────────────────────────────────────────────────────
+
+/** Visual chatbot flows created via the drag-and-drop builder */
+export const chatbotFlow = sqliteTable("chatbot_flow", {
+  id: text("id").primaryKey(),
+  userId: text("userId")
+    .notNull()
+    .references(() => user.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  /** JSON-encoded flow definition: { nodes: Node[], edges: Edge[] } */
+  flowData: text("flowData").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  priority: integer("priority").notNull().default(0),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (t) => [
+  index("chatbot_flow_user_idx").on(t.userId),
+  index("chatbot_flow_user_enabled_idx").on(t.userId, t.enabled),
 ]);
 
 /** Track API call counts for rate limit fallback */

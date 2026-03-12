@@ -5,6 +5,7 @@ import * as message from "../messaging/message.controller";
 import * as bulk from "../bulk/bulk.controller";
 import * as schedule from "../scheduling/schedule.controller";
 import * as autoreply from "../auto-reply/autoreply.controller";
+import * as flow from "../flow/flow.controller";
 import * as stats from "../analytics/stats.controller";
 import * as templates from "../templates/templates.controller";
 
@@ -42,5 +43,15 @@ router.delete("/auto-reply/:id", autoreply.deleteAutoReplyRule);
 router.get("/templates", templates.getTemplates);
 router.post("/templates", templates.createTemplate);
 router.delete("/templates/:id", templates.deleteTemplate);
+
+// Chatbot Flows
+router.get("/flows", flow.getFlows);
+router.get("/flows/:id", flow.getFlow);
+router.post("/flows", flow.createFlow);
+router.patch("/flows/:id", flow.updateFlow);
+router.delete("/flows/:id", flow.deleteFlow);
+
+// CTA Buttons
+router.post("/send-buttons", flow.sendCtaButtons);
 
 export { router as whatsappRouter };
