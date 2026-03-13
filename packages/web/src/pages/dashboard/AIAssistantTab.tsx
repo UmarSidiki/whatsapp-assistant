@@ -617,6 +617,22 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     }
   };
 
+  const handleGlobalMimicToggle = async (enabled: boolean) => {
+    // Update local state
+    setSettings({ ...settings, enabled });
+
+    // Sync all contacts' mimic mode to match global state
+    // When global is OFF: disable mimic for all contacts
+    // When global is ON: enable mimic for all contacts
+    try {
+      for (const contact of contacts) {
+        await handleToggleMimicMode(contact.phone, enabled);
+      }
+    } catch (err) {
+      console.error("Failed to sync mimic mode for all contacts:", err);
+    }
+  };
+
   const getPersonaStatusColor = (lastRefresh?: string): string => {
     if (!lastRefresh) return "text-gray-500";
     const refreshTime = new Date(lastRefresh).getTime();
@@ -659,15 +675,13 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
             </span>
             <Switch
               checked={settings.enabled}
-              onCheckedChange={(enabled) =>
-                setSettings({ ...settings, enabled })
-              }
+              onCheckedChange={handleGlobalMimicToggle}
             />
           </CardTitle>
           <CardDescription>
             {settings.enabled
-              ? "✓ AI assistant is globally enabled"
-              : "✗ AI assistant is globally disabled"}
+              ? "✓ AI assistant is globally enabled — all contacts with mimic enabled"
+              : "✗ AI assistant is globally disabled — all contacts with mimic disabled"}
           </CardDescription>
         </CardHeader>
       </Card>

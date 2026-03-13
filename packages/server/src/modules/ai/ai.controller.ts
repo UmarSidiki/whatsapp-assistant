@@ -5,6 +5,7 @@ import * as aiResponseService from "./ai-response.service";
 import * as aiPersonaService from "./ai-persona.service";
 import * as aiAssistantService from "./ai-assistant.service";
 import { setMimicEnabledForContact, isMimicEnabledForContact } from "../messaging/message-handler.service";
+import { getContactName } from "../whatsapp/wa-socket";
 import * as apiUsageService from "./api-usage.service";
 import { db } from "../../database";
 import { aiSettings, apiKeys, aiChatHistory, aiPersona } from "../../database/schema";
@@ -700,11 +701,12 @@ export async function getContacts(c: Context) {
           ? new Date(Number(stat.lastTs) * 1000).toISOString()
           : undefined;
         const personaDate = personaMap.get(stat.contactPhone);
+        const contactName = getContactName(userId, stat.contactPhone);
 
         return {
           id: stat.contactPhone,
           phone: stat.contactPhone,
-          name: stat.contactPhone,
+          name: contactName,
           messageCount: Number(stat.count),
           lastMessageDate,
           mimicMode: isMimicEnabledForContact(userId, stat.contactPhone),

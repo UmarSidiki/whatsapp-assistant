@@ -243,3 +243,41 @@ export async function resolvePhoneNumber(userId: string, jid: string): Promise<s
 
   return jidToContactId(jid);
 }
+
+/**
+ * Get contact name from Baileys store by phone number.
+ * Returns the contact's saved name, or the phone number if not found/no store available.
+ */
+export function getContactName(userId: string, contactPhone: string): string {
+  try {
+    const session = getSessionIfExists(userId);
+    if (!session?.socket) {
+      return contactPhone;
+    }
+
+    const sock = session.socket as any;
+    const contacts = sock?.store?.contacts as Record<string, any> | undefined;
+    if (!contacts) {
+      return contactPhone;
+    }
+
+    // Try to find the contact by JID format
+    const jid = toJid(contactPhone);
+    const contact = contacts[jid];
+    if (contact?.name && typeof contact.name === "string") {
+      return contact.name.trim();
+    }
+
+    // Also try without JID format in case it's stored differently
+    const contactEntry = Object.entries(contacts).find(
+      ([key]) => key.includes(contactPhone) || key.startsWith(contactPhone + "@")
+    );
+    if (contactEntry?.[1]?.name && typeof contactEntry[1].name === "string") {
+      return contactEntry[1].name.trim();
+    }
+
+    return contactPhone;
+  } catch {
+    return contactPhone;
+  }
+}

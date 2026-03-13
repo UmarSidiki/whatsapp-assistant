@@ -1,8 +1,8 @@
 import { eq, and } from "drizzle-orm";
 import { db } from "../../database";
-import { aiSettings, aiPersona } from "../../database/schema";
+import { aiSettings, aiPersona, aiChatHistory } from "../../database/schema";
 import { logger } from "../../core/logger";
-import { normalizeContactId } from "../whatsapp/wa-socket";
+import { normalizeContactId, getContactName } from "../whatsapp/wa-socket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -11,6 +11,7 @@ export interface CommandResult {
     | "explain"
     | "mimic"
     | "global_mimic"
+    | "mimic_status"
     | "refresh"
     | "status"
     | "download_media"
@@ -185,6 +186,15 @@ export function parseCommand(message: string): CommandResult {
     };
   }
 
+  // !mimic status - show which contacts have mimic enabled
+  const mimicStatusMatch = trimmed.match(/^!mimic\s+status$/i);
+  if (mimicStatusMatch) {
+    return {
+      type: "mimic_status",
+      requiresResponse: true,
+    };
+  }
+
   // !refresh persona - force persona update
   const refreshMatch = trimmed.match(/^!refresh\s+persona$/i);
   if (refreshMatch) {
@@ -230,9 +240,10 @@ export async function executeCommand(
       case "mimic":
         const enabled = command.data?.enabled ?? false;
         setMimicEnabledForContact(userId, contactPhone, enabled);
+        const contactName = getContactName(userId, contactPhone);
         return enabled
-          ? "🎭 Mimic mode enabled for this contact"
-          : "🎭 Mimic mode disabled for this contact";
+          ? `🎭 Mimic mode enabled for ${contactName}`
+          : `🎭 Mimic mode disabled for ${contactName}`;
 
       case "global_mimic":
         const globalEnabled = command.data?.enabled ?? false;
@@ -247,6 +258,9 @@ export async function executeCommand(
         } catch {
           return "❌ Failed to update global AI setting";
         }
+
+      case "mimic_status":
+        return await getMimicStatusMessage(userId);
 
       case "refresh":
         // Call refreshPersona logic
@@ -392,6 +406,64 @@ async function getAIStatusMessage(userId: string): Promise<string> {
       userId,
     });
     return "⚙️ AI Settings: Unable to retrieve";
+  }
+}
+
+/**
+ * Get mimic status for all contacts
+ */
+async function getMimicStatusMessage(userId: string): Promise<string> {
+  try {
+    // Get all contacts for this user
+    const contacts = await db
+      .selectDistinct({
+        contactPhone: aiChatHistory.contactPhone,
+      })
+      .from(aiChatHistory)
+      .where(eq(aiChatHistory.userId, userId));
+
+    if (contacts.length === 0) {
+      return "🎭 Mimic Status: No contacts with chat history yet.";
+    }
+
+    // Check global AI setting
+    const settings = await db
+      .select({ aiEnabled: aiSettings.aiEnabled })
+      .from(aiSettings)
+      .where(eq(aiSettings.userId, userId))
+      .then((rows) => rows[0]);
+
+    const globalStatus = settings?.aiEnabled ? "✅ ON" : "❌ OFF";
+
+    // Get mimic status for each contact
+    const contactStatuses = contacts
+      .map((c) => {
+        const mimicEnabled = isMimicEnabledForContact(userId, c.contactPhone, settings?.aiEnabled ?? true);
+        const status = mimicEnabled ? "✅" : "❌";
+        return `• ${c.contactPhone}: ${status}`;
+      })
+      .join("\n");
+
+    return [
+      "🎭 Mimic Status Report",
+      "",
+      `Global AI Default: ${globalStatus}`,
+      "",
+      "Per-Contact Status:",
+      contactStatuses,
+      "",
+      "📌 Commands",
+      "• !mimic on — enable mimic for this contact",
+      "• !mimic off — disable mimic for this contact",
+      "• !mimic global on — enable AI for all contacts",
+      "• !mimic global off — disable AI for all contacts",
+    ].join("\n");
+  } catch (error) {
+    logger.error("Failed to get mimic status", {
+      error: String(error),
+      userId,
+    });
+    return "❌ Unable to retrieve mimic status";
   }
 }
 
