@@ -1528,7 +1528,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                     !mimic on
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    Enable AI auto-reply for this contact (default: on).
+                    Force-enable AI auto-reply for this contact (even if global default is off).
                   </td>
                 </tr>
                 <tr>
@@ -1536,7 +1536,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                     !mimic off
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    Disable AI auto-reply for this contact only.
+                    Force-disable AI auto-reply for this contact only.
                   </td>
                 </tr>
                 <tr>
@@ -1544,7 +1544,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                     !mimic global on
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    Enable AI globally (responds to ALL contacts).
+                    Set global default to enabled (contacts with !mimic off stay disabled).
                   </td>
                 </tr>
                 <tr>
@@ -1552,7 +1552,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                     !mimic global off
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    Disable AI globally (stops responding to everyone).
+                    Set global default to disabled (contacts with !mimic on stay enabled).
                   </td>
                 </tr>
                 <tr>

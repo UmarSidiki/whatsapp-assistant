@@ -508,16 +508,10 @@ export async function handleAIResponse(
       return;
     }
 
-    if (!aiEnabled && aiMode !== "bot") {
-      logger.info(`${tag} AI is disabled globally, skipping`, { userId });
-      return;
-    }
-
-    // ── Check per-contact mimic toggle ────────────────────────────────────
-    // Default is enabled (opt-out model). Only skip if explicitly turned off via !mimic off.
-    // If contact explicitly invoked the bot, bypass the mimic check
-    if (!isMimicEnabledForContact(userId, contactPhone) && aiMode !== "bot") {
-      logger.info(`${tag} Mimic disabled for this contact, skipping`, { userId });
+    // ── Evaluate effective mimic state (contact override > global default) ──
+    // If contact explicitly invoked the bot, bypass mimic/global checks.
+    if (aiMode !== "bot" && !isMimicEnabledForContact(userId, contactPhone, aiEnabled)) {
+      logger.info(`${tag} Effective mimic disabled, skipping`, { userId, aiEnabled });
       return;
     }
 

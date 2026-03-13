@@ -585,8 +585,29 @@ function getButtonArgs(message: Record<string, unknown>): BinaryNode {
   if (nativeFlow) {
     const buttons = nativeFlow.buttons as Array<{ name?: string }> | undefined;
     const firstButtonName = buttons?.[0]?.name;
-    const specialNames = ['review_and_pay', 'payment_info', 'mpm', 'automated_greeting_message_view_catalog'];
-    const nameAttr = firstButtonName && specialNames.includes(firstButtonName) ? firstButtonName : 'mixed';
+    if (firstButtonName === "review_and_pay" || firstButtonName === "payment_info") {
+      return {
+        tag: "biz",
+        attrs: {
+          native_flow_name: firstButtonName === "review_and_pay" ? "order_details" : firstButtonName,
+        },
+      };
+    }
+
+    const nativeFlowSpecials = new Set([
+      "mpm",
+      "cta_catalog",
+      "send_location",
+      "call_permission_request",
+      "wa_payment_transaction_details",
+      "automated_greeting_message_view_catalog",
+    ]);
+    const isSpecialNativeFlow = Boolean(
+      firstButtonName && nativeFlowSpecials.has(firstButtonName)
+    );
+    const nativeFlowVersion = isSpecialNativeFlow ? "2" : "9";
+    const nativeFlowName =
+      isSpecialNativeFlow && firstButtonName ? firstButtonName : "mixed";
 
     return {
       tag: "biz",
@@ -596,7 +617,7 @@ function getButtonArgs(message: Record<string, unknown>): BinaryNode {
         attrs: { type: "native_flow", v: "1" },
         content: [{
           tag: "native_flow",
-          attrs: { v: "9", name: nameAttr },
+          attrs: { v: nativeFlowVersion, name: nativeFlowName },
         }],
       }],
     };
