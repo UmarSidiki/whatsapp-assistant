@@ -13,9 +13,24 @@ export interface MessageHistoryItem {
 }
 
 const MAX_MESSAGES_PER_CONTACT = 500;
+const SYSTEM_CONTACT_IDS = new Set(["me", "contact", "ai", "assistant", "user"]);
 
 interface StoreMessageOptions {
   skipTrim?: boolean;
+}
+
+function normalizeStoredSender(sender: string): "me" | "contact" {
+  return sender === "me" ? "me" : "contact";
+}
+
+/**
+ * Legacy/invalid buckets (e.g. "ai", "contact") can exist from older builds.
+ * Treat these as system IDs so dashboard/persona APIs only show real contacts.
+ */
+export function isSystemContactId(contactPhone: string): boolean {
+  const normalized = normalizeContactId(contactPhone);
+  if (!normalized) return true;
+  return SYSTEM_CONTACT_IDS.has(normalized);
 }
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
@@ -39,6 +54,13 @@ export async function storeMessage(
   const normalizedPhone = normalizeContactId(contactPhone);
   if (!normalizedPhone) {
     logger.warn("AI assistant: Invalid contact identifier", { contactPhone });
+    return;
+  }
+  if (isSystemContactId(normalizedPhone)) {
+    logger.warn("AI assistant: Skipping system contact identifier", {
+      userId,
+      contactPhone: normalizedPhone,
+    });
     return;
   }
 
@@ -125,7 +147,13 @@ export async function getMessageHistory(
       .limit(limit_n);
 
     // Reverse to get chronological order
-    return messages.reverse();
+    return messages
+      .map((msg) => ({
+        message: msg.message,
+        sender: normalizeStoredSender(String(msg.sender)),
+        timestamp: msg.timestamp,
+      }))
+      .reverse();
   } catch (e) {
     logger.error("AI assistant: Failed to retrieve message history", {
       error: String(e),
@@ -183,7 +211,9 @@ export async function getContacts(userId: string): Promise<string[]> {
       .orderBy(desc(max(aiChatHistory.timestamp)))
       .limit(20);
 
-    return result.map((r) => r.contactPhone);
+    return result
+      .map((r) => r.contactPhone)
+      .filter((contactPhone) => !isSystemContactId(contactPhone));
   } catch (e) {
     logger.error("AI assistant: Failed to retrieve contacts", {
       error: String(e),

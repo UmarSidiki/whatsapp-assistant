@@ -686,8 +686,12 @@ export async function getContacts(c: Context) {
         .orderBy(desc(sql<number>`max(${aiChatHistory.timestamp})`))
         .limit(20);
 
+      const validMsgStats = msgStats.filter(
+        (stat) => !aiAssistantService.isSystemContactId(stat.contactPhone)
+      );
+
       // Get persona lastUpdated for these top contacts
-      const contactPhones = msgStats.map((s) => s.contactPhone);
+      const contactPhones = validMsgStats.map((s) => s.contactPhone);
       const personaRows =
         contactPhones.length > 0
           ? await db
@@ -701,7 +705,7 @@ export async function getContacts(c: Context) {
 
       const personaMap = new Map(personaRows.map((p) => [p.contactPhone, p.lastUpdated]));
 
-      const contacts = msgStats.map((stat) => {
+      const contacts = validMsgStats.map((stat) => {
         // lastTs is raw SQLite integer (Unix seconds for mode: "timestamp")
         const lastMessageDate = stat.lastTs
           ? new Date(Number(stat.lastTs) * 1000).toISOString()

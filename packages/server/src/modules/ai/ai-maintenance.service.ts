@@ -2,7 +2,7 @@ import { desc, eq, max, sql } from "drizzle-orm";
 import { db } from "../../database";
 import { aiChatHistory, aiPersona } from "../../database/schema";
 import { logger } from "../../core/logger";
-import { trimMessageHistoryForContact } from "./ai-assistant.service";
+import { trimMessageHistoryForContact, isSystemContactId } from "./ai-assistant.service";
 import { getAllSessions, toJid } from "../whatsapp/wa-socket";
 
 const TOP_CHAT_LIMIT = 20;
@@ -23,7 +23,9 @@ async function getTopContactsByRecency(userId: string, limitCount: number): Prom
     .orderBy(desc(max(aiChatHistory.timestamp)))
     .limit(limitCount);
 
-  return rows.map((row) => row.contactPhone);
+  return rows
+    .map((row) => row.contactPhone)
+    .filter((contactPhone) => !isSystemContactId(contactPhone));
 }
 
 async function pruneUnusedChatsForUser(userId: string, topContacts: string[]): Promise<void> {
