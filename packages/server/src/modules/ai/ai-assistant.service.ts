@@ -1,4 +1,4 @@
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, max } from "drizzle-orm";
 import { db } from "../../database";
 import { aiChatHistory } from "../../database/schema";
 import { logger } from "../../core/logger";
@@ -172,12 +172,16 @@ export async function getMessageCount(
  */
 export async function getContacts(userId: string): Promise<string[]> {
   try {
+    // Get top 20 contacts by most recent message
     const result = await db
-      .selectDistinct({
+      .select({
         contactPhone: aiChatHistory.contactPhone,
       })
       .from(aiChatHistory)
-      .where(eq(aiChatHistory.userId, userId));
+      .where(eq(aiChatHistory.userId, userId))
+      .groupBy(aiChatHistory.contactPhone)
+      .orderBy(desc(max(aiChatHistory.timestamp)))
+      .limit(20);
 
     return result.map((r) => r.contactPhone);
   } catch (e) {

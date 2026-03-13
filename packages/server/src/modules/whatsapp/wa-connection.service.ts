@@ -14,7 +14,7 @@ import pino from "pino";
 import { existsSync, readdirSync, rmSync } from "fs";
 import { eq } from "drizzle-orm";
 import { logger } from "../../core/logger";
-import { getSession, getSessionIfExists, setSession, removeSession, extractTextFromMessage, getContextInfoFromMessage, isIndividualJid, jidToContactId, getSocketFor, toJid, clearBackfillTrackerForUser } from "./wa-socket";
+import { getSession, getSessionIfExists, setSession, removeSession, extractTextFromMessage, getContextInfoFromMessage, isIndividualJid, jidToContactId, getSocketFor, toJid, clearBackfillTrackerForUser, clearContactNamesForUser, upsertContactName, upsertContactNames } from "./wa-socket";
 import { handleAutoReply } from "../auto-reply/autoreply.service";
 import {
   storeMessage,
@@ -106,6 +106,7 @@ function clearRuntimeState(userId: string): void {
   clearBackfillTrackerForUser(userId);
   clearMimicSettingsForUser(userId);
   clearBufferedMessagesForUser(userId);
+  clearContactNamesForUser(userId);
 }
 
 // ─── Connection ───────────────────────────────────────────────────────────────
@@ -153,6 +154,16 @@ export async function init(userId: string): Promise<void> {
     });
 
     setSession(userId, { socket: sock });
+
+    sock.ev.on("contacts.upsert" as any, (contacts: any[]) => {
+      if (!isCurrentSocket(userId, sock) || !Array.isArray(contacts)) return;
+      upsertContactNames(userId, contacts as any);
+    });
+
+    sock.ev.on("contacts.update" as any, (contacts: any[]) => {
+      if (!isCurrentSocket(userId, sock) || !Array.isArray(contacts)) return;
+      upsertContactNames(userId, contacts as any);
+    });
 
     sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
       if (!isCurrentSocket(userId, sock)) return;
@@ -233,6 +244,9 @@ export async function init(userId: string): Promise<void> {
           if (!text) continue;
 
           const contactPhone = jidToContactId(jid);
+          if (!msg.key.fromMe && typeof msg.pushName === "string" && msg.pushName.trim()) {
+            upsertContactName(userId, contactPhone, msg.pushName);
+          }
           const sender = msg.key.fromMe ? "me" : "contact";
           const ts = msg.messageTimestamp
             ? new Date(Number(msg.messageTimestamp) * 1000)
@@ -285,6 +299,9 @@ export async function init(userId: string): Promise<void> {
         if (!text) continue;
 
         const contactPhone = jidToContactId(jid);
+        if (!msg.key.fromMe && typeof msg.pushName === "string" && msg.pushName.trim()) {
+          upsertContactName(userId, contactPhone, msg.pushName);
+        }
         const sender = msg.key.fromMe ? "me" : "contact";
 
         // Store every message (both history-append and real-time-notify)

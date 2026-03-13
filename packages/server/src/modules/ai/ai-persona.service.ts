@@ -561,10 +561,10 @@ export async function getPersona(
 
     const cached = result[0];
 
-    // Check if persona is older than 24 hours
+    // Check if persona is older than 6 hours to keep mimic style current.
     const now = new Date();
-    const dayInMs = 24 * 60 * 60 * 1000;
-    if (now.getTime() - cached.lastUpdated.getTime() > dayInMs) {
+    const maxPersonaAgeMs = 6 * 60 * 60 * 1000;
+    if (now.getTime() - cached.lastUpdated.getTime() > maxPersonaAgeMs) {
       logger.debug("Persona cache expired", { userId, contactPhone: normalizedPhone });
       return null;
     }

@@ -7,11 +7,15 @@ import { logger } from './core/logger'
 import inviteCodes from './config/invite-codes.json'
 import { restoreScheduledMessages } from './modules/scheduling/schedule.service'
 import { autoReconnectAll } from './modules/whatsapp/wa-connection.service'
+import { startAIMaintenanceScheduler } from './modules/ai/ai-maintenance.service'
 
 const app = new Hono()
 
 // Auto-reconnect all WhatsApp sessions from stored auth
 autoReconnectAll().catch(e => logger.error("Failed to auto-reconnect WhatsApp sessions", e))
+
+// Keep AI data fresh and bounded (top 20 chats, every 6 hours)
+startAIMaintenanceScheduler()
 
 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 app.use(cors({

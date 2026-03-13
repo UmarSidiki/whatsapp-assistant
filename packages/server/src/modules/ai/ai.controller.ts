@@ -9,7 +9,7 @@ import { getContactName } from "../whatsapp/wa-socket";
 import * as apiUsageService from "./api-usage.service";
 import { db } from "../../database";
 import { aiSettings, apiKeys, aiChatHistory, aiPersona } from "../../database/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { and, eq, sql, desc } from "drizzle-orm";
 import { logger } from "../../core/logger";
 import { auth } from "../../core/auth";
 
@@ -673,7 +673,7 @@ export async function getContacts(c: Context) {
     }
 
     try {
-      // One query: message count + last message timestamp per contact
+      // Get top 20 contacts by message count and recency, grouped with stats
       const msgStats = await db
         .select({
           contactPhone: aiChatHistory.contactPhone,
@@ -682,16 +682,22 @@ export async function getContacts(c: Context) {
         })
         .from(aiChatHistory)
         .where(eq(aiChatHistory.userId, userId))
-        .groupBy(aiChatHistory.contactPhone);
+        .groupBy(aiChatHistory.contactPhone)
+        .orderBy(desc(sql<number>`max(${aiChatHistory.timestamp})`))
+        .limit(20);
 
-      // One query: persona lastUpdated per contact
-      const personaRows = await db
-        .select({
-          contactPhone: aiPersona.contactPhone,
-          lastUpdated: aiPersona.lastUpdated,
-        })
-        .from(aiPersona)
-        .where(eq(aiPersona.userId, userId));
+      // Get persona lastUpdated for these top contacts
+      const contactPhones = msgStats.map((s) => s.contactPhone);
+      const personaRows =
+        contactPhones.length > 0
+          ? await db
+              .select({
+                contactPhone: aiPersona.contactPhone,
+                lastUpdated: aiPersona.lastUpdated,
+              })
+              .from(aiPersona)
+              .where(eq(aiPersona.userId, userId))
+          : [];
 
       const personaMap = new Map(personaRows.map((p) => [p.contactPhone, p.lastUpdated]));
 
@@ -713,13 +719,6 @@ export async function getContacts(c: Context) {
           status: "ready" as const,
           personaLastRefresh: personaDate?.toISOString(),
         };
-      });
-
-      // Sort by last message date descending (most recent first)
-      contacts.sort((a, b) => {
-        if (!a.lastMessageDate) return 1;
-        if (!b.lastMessageDate) return -1;
-        return b.lastMessageDate.localeCompare(a.lastMessageDate);
       });
 
       return { contacts };

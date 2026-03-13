@@ -36,6 +36,7 @@ export class ServiceError extends Error {
 // ─── Per-user session state ───────────────────────────────────────────────────
 
 const sessions = new Map<string, WAState>();
+const contactNamesByUser = new Map<string, Map<string, string>>();
 
 function defaultState(): WAState {
   return { socket: null, status: "idle", qr: undefined };
@@ -65,6 +66,55 @@ export function setSession(userId: string, patch: Partial<WAState>): void {
 /** Remove a user's session entirely. */
 export function removeSession(userId: string): void {
   sessions.delete(userId);
+  contactNamesByUser.delete(userId);
+}
+
+function getOrCreateContactMap(userId: string): Map<string, string> {
+  let map = contactNamesByUser.get(userId);
+  if (!map) {
+    map = new Map<string, string>();
+    contactNamesByUser.set(userId, map);
+  }
+  return map;
+}
+
+export function clearContactNamesForUser(userId: string): void {
+  contactNamesByUser.delete(userId);
+}
+
+export function upsertContactName(userId: string, contactId: string, name: string): void {
+  const normalizedId = normalizeContactId(contactId);
+  const cleanedName = name.trim();
+  if (!normalizedId || !cleanedName) {
+    return;
+  }
+  getOrCreateContactMap(userId).set(normalizedId, cleanedName);
+}
+
+export function upsertContactNames(
+  userId: string,
+  contacts: Array<{
+    id?: string;
+    jid?: string;
+    notify?: string;
+    name?: string;
+    short?: string;
+    verifiedName?: string;
+  }>
+): void {
+  for (const contact of contacts) {
+    const contactId = contact.id ?? contact.jid;
+    const name =
+      contact.name?.trim() ||
+      contact.notify?.trim() ||
+      contact.verifiedName?.trim() ||
+      contact.short?.trim() ||
+      "";
+    if (!contactId || !name) {
+      continue;
+    }
+    upsertContactName(userId, contactId, name);
+  }
 }
 
 // ─── Backfill Tracking ────────────────────────────────────────────────────────
@@ -250,6 +300,12 @@ export async function resolvePhoneNumber(userId: string, jid: string): Promise<s
  */
 export function getContactName(userId: string, contactPhone: string): string {
   try {
+    const normalizedPhone = normalizeContactId(contactPhone);
+    const cached = contactNamesByUser.get(userId)?.get(normalizedPhone);
+    if (cached) {
+      return cached;
+    }
+
     const session = getSessionIfExists(userId);
     if (!session?.socket) {
       return contactPhone;
@@ -264,16 +320,31 @@ export function getContactName(userId: string, contactPhone: string): string {
     // Try to find the contact by JID format
     const jid = toJid(contactPhone);
     const contact = contacts[jid];
-    if (contact?.name && typeof contact.name === "string") {
-      return contact.name.trim();
+    const directName =
+      (typeof contact?.name === "string" && contact.name.trim()) ||
+      (typeof contact?.notify === "string" && contact.notify.trim()) ||
+      (typeof contact?.verifiedName === "string" && contact.verifiedName.trim()) ||
+      (typeof contact?.short === "string" && contact.short.trim()) ||
+      "";
+    if (directName) {
+      upsertContactName(userId, normalizedPhone, directName);
+      return directName;
     }
 
     // Also try without JID format in case it's stored differently
     const contactEntry = Object.entries(contacts).find(
       ([key]) => key.includes(contactPhone) || key.startsWith(contactPhone + "@")
     );
-    if (contactEntry?.[1]?.name && typeof contactEntry[1].name === "string") {
-      return contactEntry[1].name.trim();
+    const maybeContact = contactEntry?.[1] as Record<string, unknown> | undefined;
+    const fallbackName =
+      (typeof maybeContact?.name === "string" && maybeContact.name.trim()) ||
+      (typeof maybeContact?.notify === "string" && maybeContact.notify.trim()) ||
+      (typeof maybeContact?.verifiedName === "string" && maybeContact.verifiedName.trim()) ||
+      (typeof maybeContact?.short === "string" && maybeContact.short.trim()) ||
+      "";
+    if (fallbackName) {
+      upsertContactName(userId, normalizedPhone, fallbackName);
+      return fallbackName;
     }
 
     return contactPhone;

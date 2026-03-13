@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc, max } from "drizzle-orm";
 import { db } from "../../database";
 import { aiSettings, aiPersona, aiChatHistory } from "../../database/schema";
 import { logger } from "../../core/logger";
@@ -410,19 +410,23 @@ async function getAIStatusMessage(userId: string): Promise<string> {
 }
 
 /**
- * Get mimic status for all contacts
+ * Get mimic status for all contacts (top 20 most recent)
  */
 async function getMimicStatusMessage(userId: string): Promise<string> {
   try {
-    // Get all contacts for this user
-    const contacts = await db
-      .selectDistinct({
+    // Get top 20 contacts by most recent message
+    const topContacts = await db
+      .select({
         contactPhone: aiChatHistory.contactPhone,
+        lastTs: max(aiChatHistory.timestamp),
       })
       .from(aiChatHistory)
-      .where(eq(aiChatHistory.userId, userId));
+      .where(eq(aiChatHistory.userId, userId))
+      .groupBy(aiChatHistory.contactPhone)
+      .orderBy(desc(max(aiChatHistory.timestamp)))
+      .limit(20);
 
-    if (contacts.length === 0) {
+    if (topContacts.length === 0) {
       return "🎭 Mimic Status: No contacts with chat history yet.";
     }
 
@@ -435,17 +439,18 @@ async function getMimicStatusMessage(userId: string): Promise<string> {
 
     const globalStatus = settings?.aiEnabled ? "✅ ON" : "❌ OFF";
 
-    // Get mimic status for each contact
-    const contactStatuses = contacts
+    // Get mimic status for each contact with proper names
+    const contactStatuses = topContacts
       .map((c) => {
+        const contactName = getContactName(userId, c.contactPhone);
         const mimicEnabled = isMimicEnabledForContact(userId, c.contactPhone, settings?.aiEnabled ?? true);
         const status = mimicEnabled ? "✅" : "❌";
-        return `• ${c.contactPhone}: ${status}`;
+        return `• ${contactName}: ${status}`;
       })
       .join("\n");
 
     return [
-      "🎭 Mimic Status Report",
+      "🎭 Mimic Status Report (Top 20)",
       "",
       `Global AI Default: ${globalStatus}`,
       "",
