@@ -2,9 +2,7 @@ import { desc, eq, max, sql } from "drizzle-orm";
 import { db } from "../../database";
 import { aiChatHistory, aiPersona } from "../../database/schema";
 import { logger } from "../../core/logger";
-import { getMessageHistory, trimMessageHistoryForContact } from "./ai-assistant.service";
-import { refreshPersona, savePersona } from "./ai-persona.service";
-import { generatePersonaAIDescription } from "./ai-response.service";
+import { trimMessageHistoryForContact } from "./ai-assistant.service";
 import { getAllSessions, toJid } from "../whatsapp/wa-socket";
 
 const TOP_CHAT_LIMIT = 20;
@@ -70,25 +68,6 @@ async function refreshTopContactData(userId: string, topContacts: string[]): Pro
             error: String(fetchError),
           });
         }
-      }
-
-      // Refresh persona from latest history and enrich with AI description.
-      const persona = await refreshPersona(userId, contactPhone);
-      try {
-        const history = await getMessageHistory(userId, contactPhone, 100);
-        if (history.length > 0) {
-          const aiDescription = await generatePersonaAIDescription(userId, contactPhone, history);
-          if (aiDescription) {
-            persona.aiDescription = aiDescription;
-            await savePersona(userId, contactPhone, persona);
-          }
-        }
-      } catch (descError) {
-        logger.debug("AI maintenance: AI persona description refresh failed", {
-          userId,
-          contactPhone,
-          error: String(descError),
-        });
       }
     } catch (error) {
       logger.warn("AI maintenance: failed for contact", {
@@ -169,13 +148,6 @@ export function startAIMaintenanceScheduler(): void {
   if (maintenanceTimer) {
     return;
   }
-
-  // Warm-up run shortly after boot.
-  setTimeout(() => {
-    runAIMaintenanceCycle().catch((error) => {
-      logger.error("AI maintenance: warm-up cycle failed", { error: String(error) });
-    });
-  }, 30_000).unref?.();
 
   maintenanceTimer = setInterval(() => {
     runAIMaintenanceCycle().catch((error) => {

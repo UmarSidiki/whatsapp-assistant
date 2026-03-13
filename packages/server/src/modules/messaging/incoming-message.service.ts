@@ -15,6 +15,7 @@ import { handleAutoReply } from "../auto-reply/autoreply.service";
 import { getMessageCount, getMessageHistory } from "../ai/ai-assistant.service";
 import { BACKFILL_TARGET_MESSAGES, hasRecentBackfillRequest, markBackfillRequested } from "../whatsapp/wa-socket";
 const MEDIA_DOWNLOAD_COMMAND_LOGGER = pino({ level: "silent" });
+const MIN_MESSAGES_FOR_PERSONA = 5;
 
 interface ParsedReminderIntent {
   task: string;
@@ -580,7 +581,7 @@ export async function handleAIResponse(
 
       if (!persona) {
         const freshCount = await getMessageCount(userId, contactPhone);
-        if (freshCount >= 5) {
+        if (freshCount >= MIN_MESSAGES_FOR_PERSONA) {
           logger.info(`${tag} Generating persona from ${freshCount} messages`, { userId });
 
           // Rule-based extraction first (fast, always works)
@@ -605,7 +606,10 @@ export async function handleAIResponse(
           await savePersona(userId, contactPhone, persona);
           logger.info(`${tag} Persona saved`, { userId });
         } else {
-          logger.info(`${tag} Only ${freshCount} messages — will use default persona`, { userId });
+          logger.info(
+            `${tag} Only ${freshCount} messages — continuing mimic with default persona fallback`,
+            { userId, requiredMessages: MIN_MESSAGES_FOR_PERSONA }
+          );
         }
       }
     }
