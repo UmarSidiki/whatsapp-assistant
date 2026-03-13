@@ -337,18 +337,18 @@ export async function init(userId: string): Promise<void> {
             continue;
           }
 
-          // Buffer rapid incoming messages, then run the full AI flow
+          // Chatbot flows fire immediately (no buffering needed)
+          const flowMatched = await executeFlows(userId, jid, text);
+          if (flowMatched) continue;
+
+          // Auto-reply fires immediately (no buffering needed)
+          const autoReplied = await handleAutoReply(userId, jid, text);
+          if (autoReplied) continue;
+
+          // Only AI mimic mode needs buffering to combine rapid messages
           const bufferKey = `${userId}_${contactPhone}`;
           bufferIncomingMessage(bufferKey, text, async (combinedText) => {
-            // Chatbot flows take highest priority
-            const flowMatched = await executeFlows(userId, jid, combinedText);
-            if (flowMatched) return;
-
-            // Auto-reply takes priority over AI
-            const autoReplied = await handleAutoReply(userId, jid, combinedText);
-            if (!autoReplied) {
-              await handleAIResponse(userId, jid, contactPhone, combinedText, { quotedText });
-            }
+            await handleAIResponse(userId, jid, contactPhone, combinedText, { quotedText });
           });
         }
       }
