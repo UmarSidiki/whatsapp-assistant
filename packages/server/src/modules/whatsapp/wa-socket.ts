@@ -195,6 +195,7 @@ export function extractTextFromMessage(message?: proto.IMessage | null): string 
     content.buttonsResponseMessage?.selectedDisplayText ||
     content.listResponseMessage?.title ||
     content.templateButtonReplyMessage?.selectedDisplayText ||
+    (content as any).interactiveResponseMessage?.body?.text ||
     ""
   ).trim();
 }
@@ -211,4 +212,34 @@ export function getContextInfoFromMessage(
     content?.documentMessage?.contextInfo ||
     undefined
   );
+}
+
+/**
+ * Resolve a JID to a phone number string.
+ * For PN JIDs (e.g. 923001234567@s.whatsapp.net), extracts the phone directly.
+ * For LID JIDs, attempts to resolve via the socket's signal repository mapping.
+ * Returns the numeric phone or the raw contactId if resolution fails.
+ */
+export async function resolvePhoneNumber(userId: string, jid: string): Promise<string> {
+  // If it's a phone-based JID, just extract the number
+  if (isPnUser(jid) || isHostedPnUser(jid)) {
+    return jidToContactId(jid);
+  }
+
+  // For LID JIDs, try to resolve via Baileys' internal LID mapping
+  if (isLidUser(jid) || isHostedLidUser(jid)) {
+    try {
+      const session = getSessionIfExists(userId);
+      const sock = session?.socket as any;
+      const pnJid = await sock?.signalRepository?.lidMapping?.getPNForLID(jid);
+      if (pnJid && typeof pnJid === "string") {
+        const decoded = jidDecode(pnJid);
+        if (decoded?.user) return decoded.user;
+      }
+    } catch {
+      // Fall through to default
+    }
+  }
+
+  return jidToContactId(jid);
 }

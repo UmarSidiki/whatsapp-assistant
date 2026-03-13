@@ -2,10 +2,11 @@
 
 export interface FlowButton {
   id: string;
-  type: "reply" | "url" | "call";
+  type: "reply" | "url" | "call" | "copy";
   text: string;
   url?: string;
   phoneNumber?: string;
+  copyCode?: string;
 }
 
 export interface FlowNodeData {

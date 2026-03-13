@@ -63,18 +63,31 @@ function FlowCanvasInner({ initialData, onChange }: FlowCanvasProps) {
 
   const onConnect = useCallback(
     (connection: Connection) => {
+      let label: string | undefined;
+      if (connection.sourceHandle === "yes") label = "Yes";
+      else if (connection.sourceHandle === "no") label = "No";
+      else if (connection.sourceHandle?.startsWith("btn_")) {
+        const sourceNode = nodes.find((n) => n.id === connection.source);
+        if (sourceNode) {
+          const btns = (sourceNode.data as FlowNodeData).buttons ?? [];
+          const btnId = connection.sourceHandle.replace("btn_", "");
+          const btn = btns.find((b) => b.id === btnId);
+          if (btn) label = btn.text;
+        }
+      }
+
       const edge: Edge = {
         ...connection,
         id: `e-${connection.source}-${connection.sourceHandle ?? "default"}-${connection.target}`,
         animated: true,
         style: { strokeWidth: 2 },
+        ...(label ? { label } : {}),
       };
       setEdges((eds) => addEdge(edge, eds));
     },
-    [setEdges]
+    [setEdges, nodes]
   );
 
-  // Drag-and-drop from sidebar
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
@@ -86,10 +99,11 @@ function FlowCanvasInner({ initialData, onChange }: FlowCanvasProps) {
       const type = event.dataTransfer.getData("application/reactflow");
       if (!type || !reactFlowWrapper.current) return;
 
-      const bounds = reactFlowWrapper.current.getBoundingClientRect();
+      // Use screenToFlowPosition with raw client coordinates
+      // React Flow v12 handles the container offset internally
       const position = rf.screenToFlowPosition({
-        x: event.clientX - bounds.left,
-        y: event.clientY - bounds.top,
+        x: event.clientX,
+        y: event.clientY,
       });
 
       const newNode: Node = {
@@ -107,9 +121,9 @@ function FlowCanvasInner({ initialData, onChange }: FlowCanvasProps) {
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
     event.dataTransfer.setData("application/reactflow", nodeType);
     event.dataTransfer.effectAllowed = "move";
+    // No need to store offset - we'll place the node where the cursor is in the canvas
   };
 
-  // Node selection
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     setSelectedNodeId(node.id);
   }, []);
@@ -118,7 +132,6 @@ function FlowCanvasInner({ initialData, onChange }: FlowCanvasProps) {
     setSelectedNodeId(null);
   }, []);
 
-  // Update node data from properties panel
   const handleNodeDataChange = useCallback(
     (nodeId: string, data: FlowNodeData) => {
       setNodes((nds) =>
@@ -128,7 +141,6 @@ function FlowCanvasInner({ initialData, onChange }: FlowCanvasProps) {
     [setNodes]
   );
 
-  // Delete node
   const handleDeleteNode = useCallback(
     (nodeId: string) => {
       setNodes((nds) => nds.filter((n) => n.id !== nodeId));
@@ -144,7 +156,7 @@ function FlowCanvasInner({ initialData, onChange }: FlowCanvasProps) {
     <div className="flex h-full border rounded-lg overflow-hidden bg-background">
       <NodeSidebar onDragStart={onDragStart} />
 
-      <div ref={reactFlowWrapper} className="flex-1">
+      <div ref={reactFlowWrapper} className="flex-1 relative">
         <ReactFlow
           nodes={nodes}
           edges={edges}

@@ -93,7 +93,9 @@ function MessageNodeComponent({ data, selected }: NodeProps) {
 function ButtonsNodeComponent({ data, selected }: NodeProps) {
   const d = data as FlowNodeData;
   const c = NODE_COLORS.buttons;
-  const buttonCount = d.buttons?.length ?? 0;
+  const buttons = d.buttons ?? [];
+  const replyButtons = buttons.filter((b) => b.type === "reply");
+
   return (
     <div className={`rounded-lg border-2 ${c.border} ${c.bg} px-4 py-3 min-w-[200px] max-w-[280px] shadow-sm ${selected ? "ring-2 ring-primary" : ""}`}>
       <Handle type="target" position={Position.Top} style={{ ...HANDLE_STYLE, background: c.accent }} />
@@ -105,23 +107,45 @@ function ButtonsNodeComponent({ data, selected }: NodeProps) {
         {d.buttonText ? (
           <>
             <p className="line-clamp-2 mb-1">{d.buttonText}</p>
-            <p className="opacity-70">{buttonCount} button{buttonCount !== 1 ? "s" : ""}</p>
+            <p className="opacity-70">{buttons.length} button{buttons.length !== 1 ? "s" : ""}</p>
           </>
         ) : (
           <span className="italic">Click to configure</span>
         )}
       </div>
-      {buttonCount > 0 && (
+      {buttons.length > 0 && (
         <div className="mt-1.5 space-y-1">
-          {d.buttons!.slice(0, 3).map((btn) => (
+          {buttons.slice(0, 3).map((btn) => (
             <div key={btn.id} className="flex items-center gap-1 text-[10px] bg-background/50 rounded px-1.5 py-0.5">
-              <span className={`size-1.5 rounded-full ${btn.type === "url" ? "bg-blue-400" : btn.type === "call" ? "bg-green-400" : "bg-gray-400"}`} />
-              {btn.text}
+              <span className={`size-1.5 rounded-full ${btn.type === "url" ? "bg-blue-400" : btn.type === "call" ? "bg-green-400" : btn.type === "copy" ? "bg-orange-400" : "bg-purple-400"}`} />
+              {btn.text || "Untitled"}
+            </div>
+          ))}
+          {buttons.length > 3 && (
+            <div className="text-[10px] opacity-50">+{buttons.length - 3} more</div>
+          )}
+        </div>
+      )}
+      {/* Per-reply-button output handles for branching */}
+      {replyButtons.length > 0 ? (
+        <div className="flex justify-between mt-2 gap-2">
+          {replyButtons.map((btn, i) => (
+            <div key={btn.id} className="relative flex flex-col items-center">
+              <span className="text-[9px] font-medium text-purple-500 max-w-[60px] truncate block">
+                {btn.text || `Reply ${i + 1}`}
+              </span>
+              <Handle
+                type="source"
+                position={Position.Bottom}
+                id={`btn_${btn.id}`}
+                style={{ ...HANDLE_STYLE, background: "#8b5cf6", left: "50%", bottom: -12 }}
+              />
             </div>
           ))}
         </div>
+      ) : (
+        <Handle type="source" position={Position.Bottom} style={{ ...HANDLE_STYLE, background: c.accent }} />
       )}
-      <Handle type="source" position={Position.Bottom} style={{ ...HANDLE_STYLE, background: c.accent }} />
     </div>
   );
 }

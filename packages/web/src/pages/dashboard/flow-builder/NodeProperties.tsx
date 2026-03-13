@@ -213,6 +213,7 @@ function ButtonsFields({ data, update }: { data: FlowNodeData; update: (p: Parti
                   <SelectItem value="reply">Reply</SelectItem>
                   <SelectItem value="url">URL</SelectItem>
                   <SelectItem value="call">Call</SelectItem>
+                  <SelectItem value="copy">Copy Code</SelectItem>
                 </SelectContent>
               </Select>
               <Input
@@ -241,8 +242,21 @@ function ButtonsFields({ data, update }: { data: FlowNodeData; update: (p: Parti
                 onChange={(e) => updateButton(idx, { phoneNumber: e.target.value })}
               />
             )}
+            {btn.type === "copy" && (
+              <Input
+                className="h-7 text-xs"
+                placeholder="Code to copy (e.g. DISCOUNT20)"
+                value={btn.copyCode ?? ""}
+                onChange={(e) => updateButton(idx, { copyCode: e.target.value })}
+              />
+            )}
           </div>
         ))}
+        {buttons.some((b) => b.type === "reply") && (
+          <p className="text-[10px] text-muted-foreground bg-purple-500/5 rounded p-1.5 border border-purple-500/20">
+            💡 Reply buttons create per-button output handles on the node. Connect each handle to a different branch to route based on which button the user clicks.
+          </p>
+        )}
       </div>
     </>
   );

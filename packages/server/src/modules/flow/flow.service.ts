@@ -1,8 +1,15 @@
 import { logger } from "../../core/logger";
-import { ServiceError, getSocketFor, jidToContactId, toJid } from "../whatsapp/wa-socket";
+import { ServiceError, getSocketFor, jidToContactId, toJid, resolvePhoneNumber } from "../whatsapp/wa-socket";
 import { db } from "../../database";
 import { chatbotFlow, messageLog } from "../../database/schema";
 import { eq, and, desc } from "drizzle-orm";
+import {
+  generateWAMessageFromContent,
+  normalizeMessageContent,
+  isJidGroup,
+  generateMessageIDV2,
+  type BinaryNode,
+} from "@whiskeysockets/baileys";
 
 // ─── Flow Types ───────────────────────────────────────────────────────────────
 
@@ -27,10 +34,11 @@ export interface FlowNodeData {
 
 export interface FlowButton {
   id: string;
-  type: "reply" | "url" | "call";
+  type: "reply" | "url" | "call" | "copy";
   text: string;
   url?: string;
   phoneNumber?: string;
+  copyCode?: string;
 }
 
 export interface FlowNode {
@@ -170,7 +178,36 @@ interface ExecutionContext {
   jid: string;
   incomingMessage: string;
   senderPhone: string;
+  /** Actual phone number (resolved from LID if needed). Falls back to senderPhone. */
+  resolvedPhone: string;
 }
+
+// ─── Pending Button Response Tracking ─────────────────────────────────────────
+
+interface PendingButtonSession {
+  flowData: FlowDefinition;
+  buttonsNodeId: string;
+  buttons: FlowButton[];
+  timestamp: number;
+  ctx: ExecutionContext;
+}
+
+const pendingButtonResponses = new Map<string, PendingButtonSession>();
+const PENDING_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function pendingKey(userId: string, contactPhone: string): string {
+  return `${userId}_${contactPhone}`;
+}
+
+// Periodically clean expired pending sessions
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, session] of Array.from(pendingButtonResponses.entries())) {
+    if (now - session.timestamp > PENDING_TTL_MS) {
+      pendingButtonResponses.delete(key);
+    }
+  }
+}, 60_000).unref?.();
 
 /**
  * Execute all enabled flows for a user against an incoming message.
@@ -181,6 +218,10 @@ export async function executeFlows(
   jid: string,
   text: string
 ): Promise<boolean> {
+  // Check pending button replies first (highest priority)
+  const buttonHandled = await handleButtonReply(userId, jid, text);
+  if (buttonHandled) return true;
+
   const flows = await getFlows(userId);
   const enabledFlows = flows.filter((f) => f.enabled);
 
@@ -189,11 +230,14 @@ export async function executeFlows(
 
     for (const trigger of triggerNodes) {
       if (matchesTrigger(trigger, text)) {
+        const contactId = jidToContactId(jid);
+        const phone = await resolvePhoneNumber(userId, jid);
         const ctx: ExecutionContext = {
           userId,
           jid,
           incomingMessage: text,
-          senderPhone: jidToContactId(jid),
+          senderPhone: contactId,
+          resolvedPhone: phone,
         };
 
         try {
@@ -219,8 +263,64 @@ export async function executeFlows(
   return false;
 }
 
+/**
+ * Handle an incoming message that might be a reply to previously sent buttons.
+ * Returns true if it matched a pending button reply and executed the branch.
+ */
+export async function handleButtonReply(
+  userId: string,
+  jid: string,
+  text: string
+): Promise<boolean> {
+  const contactPhone = jidToContactId(jid);
+  const key = pendingKey(userId, contactPhone);
+  const session = pendingButtonResponses.get(key);
+
+  if (!session) return false;
+
+  // Check if expired
+  if (Date.now() - session.timestamp > PENDING_TTL_MS) {
+    pendingButtonResponses.delete(key);
+    return false;
+  }
+
+  // Find matching reply button by text (case-insensitive, skip empty)
+  const matchedButton = session.buttons.find(
+    (b) => b.type === "reply" && b.text.trim() && b.text.toLowerCase() === text.toLowerCase()
+  );
+
+  if (!matchedButton) return false;
+
+  // Consume the pending session
+  pendingButtonResponses.delete(key);
+
+  // Resume flow from the matched button's output handle
+  const buttonHandle = `btn_${matchedButton.id}`;
+  const nextNodes = getNextNodes(session.flowData, session.buttonsNodeId, buttonHandle);
+
+  const ctx: ExecutionContext = {
+    ...session.ctx,
+    incomingMessage: text,
+  };
+
+  logger.info("Button reply matched", {
+    userId,
+    buttonText: matchedButton.text,
+    buttonId: matchedButton.id,
+    nextNodeCount: nextNodes.length,
+  });
+
+  const visited = new Set<string>();
+  for (const next of nextNodes) {
+    await executeFromNode(session.flowData, next.id, ctx, visited);
+  }
+
+  return true;
+}
+
 function matchesTrigger(trigger: FlowNode, text: string): boolean {
   const keyword = trigger.data.keyword?.toLowerCase() ?? "";
+  if (!keyword) return false; // skip empty triggers
   const t = text.toLowerCase();
   const matchType = trigger.data.matchType ?? "contains";
 
@@ -310,7 +410,23 @@ async function executeFromNode(
     case "buttons": {
       if (node.data.buttonText && node.data.buttons?.length) {
         await sendButtonMessage(ctx, node.data);
+
+        // If there are reply buttons, store pending session and wait for reply
+        const replyButtons = (node.data.buttons ?? []).filter((b) => b.type === "reply");
+        if (replyButtons.length > 0) {
+          const key = pendingKey(ctx.userId, ctx.senderPhone);
+          pendingButtonResponses.set(key, {
+            flowData: flow,
+            buttonsNodeId: nodeId,
+            buttons: node.data.buttons!,
+            timestamp: Date.now(),
+            ctx,
+          });
+          // Don't follow edges — wait for button reply
+          break;
+        }
       }
+      // No reply buttons — continue to next nodes immediately
       const nextNodes = getNextNodes(flow, nodeId);
       for (const next of nextNodes) {
         await executeFromNode(flow, next.id, ctx, visited);
@@ -369,10 +485,140 @@ function interpolateFlowVars(text: string, ctx: ExecutionContext): string {
   return text
     .replace(/\{message\}/g, ctx.incomingMessage)
     .replace(/\{sender\}/g, ctx.senderPhone)
-    .replace(/\{phone\}/g, ctx.senderPhone);
+    .replace(/\{phone\}/g, ctx.resolvedPhone);
 }
 
-// ─── CTA Button Sending ──────────────────────────────────────────────────────
+// ─── CTA Button Sending (direct Baileys relay with binary node injection) ────
+
+function flowButtonsToNativeFlowButtons(buttons: FlowButton[]): Array<{ name: string; buttonParamsJson: string }> {
+  return buttons.map((b, i) => {
+    switch (b.type) {
+      case "reply":
+        return {
+          name: "quick_reply",
+          buttonParamsJson: JSON.stringify({
+            display_text: b.text,
+            id: b.id || `reply_${i}`,
+          }),
+        };
+      case "url":
+        return {
+          name: "cta_url",
+          buttonParamsJson: JSON.stringify({
+            display_text: b.text,
+            url: b.url ?? "",
+            merchant_url: b.url ?? "",
+          }),
+        };
+      case "call":
+        return {
+          name: "cta_call",
+          buttonParamsJson: JSON.stringify({
+            display_text: b.text,
+            phone_number: b.phoneNumber ?? "",
+          }),
+        };
+      case "copy":
+        return {
+          name: "cta_copy",
+          buttonParamsJson: JSON.stringify({
+            display_text: b.text,
+            copy_code: b.copyCode ?? "",
+          }),
+        };
+      default:
+        return {
+          name: "quick_reply",
+          buttonParamsJson: JSON.stringify({
+            display_text: b.text,
+            id: b.id || `btn_${i}`,
+          }),
+        };
+    }
+  });
+}
+
+/**
+ * Build the binary node structure WhatsApp requires for interactive messages.
+ * This injects `biz` / `interactive` / `native_flow` nodes into `additionalNodes`
+ * so that relayMessage sends the correct protocol-level wrapper.
+ */
+function getButtonArgs(message: Record<string, unknown>): BinaryNode {
+  const interactiveMsg = message.interactiveMessage as Record<string, unknown> | undefined;
+  const nativeFlow = interactiveMsg?.nativeFlowMessage as Record<string, unknown> | undefined;
+
+  if (nativeFlow) {
+    const buttons = nativeFlow.buttons as Array<{ name?: string }> | undefined;
+    const firstButtonName = buttons?.[0]?.name;
+    const specialNames = ['review_and_pay', 'payment_info', 'mpm', 'automated_greeting_message_view_catalog'];
+    const nameAttr = firstButtonName && specialNames.includes(firstButtonName) ? firstButtonName : 'mixed';
+
+    return {
+      tag: "biz",
+      attrs: {},
+      content: [{
+        tag: "interactive",
+        attrs: { type: "native_flow", v: "1" },
+        content: [{
+          tag: "native_flow",
+          attrs: { v: "9", name: nameAttr },
+        }],
+      }],
+    };
+  }
+
+  return { tag: "biz", attrs: {} };
+}
+
+/**
+ * Send an interactive message with CTA buttons using direct Baileys relayMessage.
+ * Bypasses sock.sendMessage (which lacks the binary node injection WhatsApp needs)
+ * and instead builds the WAMessage manually + relays with additionalNodes.
+ */
+async function sendInteractiveMessage(
+  sock: ReturnType<typeof getSocketFor>,
+  jid: string,
+  content: { text: string; footer?: string; nativeFlowButtons: Array<{ name: string; buttonParamsJson: string }> }
+): Promise<void> {
+  const interactiveMessage: Record<string, unknown> = {
+    nativeFlowMessage: {
+      buttons: content.nativeFlowButtons.map((btn) => ({
+        name: btn.name,
+        buttonParamsJson: btn.buttonParamsJson,
+      })),
+    },
+    body: { text: content.text },
+  };
+
+  if (content.footer) {
+    interactiveMessage.footer = { text: content.footer };
+  }
+
+  const userJid = sock.authState?.creds?.me?.id || sock.user?.id || "";
+  const msgContent = { interactiveMessage };
+
+  const fullMsg = generateWAMessageFromContent(jid, msgContent, {
+    userJid,
+    messageId: generateMessageIDV2(userJid || ""),
+    timestamp: new Date(),
+  });
+
+  const normalized = normalizeMessageContent(fullMsg.message);
+  const additionalNodes: BinaryNode[] = [];
+
+  if (normalized) {
+    const buttonsNode = getButtonArgs(normalized as Record<string, unknown>);
+    additionalNodes.push(buttonsNode);
+    if (!isJidGroup(jid)) {
+      additionalNodes.push({ tag: "bot", attrs: { biz_bot: "1" } });
+    }
+  }
+
+  await sock.relayMessage(jid, fullMsg.message!, {
+    messageId: fullMsg.key.id!,
+    additionalNodes,
+  });
+}
 
 async function sendButtonMessage(ctx: ExecutionContext, data: FlowNodeData): Promise<void> {
   const socket = getSocketFor(ctx.userId);
@@ -380,15 +626,13 @@ async function sendButtonMessage(ctx: ExecutionContext, data: FlowNodeData): Pro
   const footer = data.buttonFooter ? interpolateFlowVars(data.buttonFooter, ctx) : undefined;
   const buttons = data.buttons ?? [];
 
-  // Separate button types
-  const urlButtons = buttons.filter((b) => b.type === "url");
-  const callButtons = buttons.filter((b) => b.type === "call");
-  const replyButtons = buttons.filter((b) => b.type === "reply");
+  const nativeFlowButtons = flowButtonsToNativeFlowButtons(buttons);
 
-  // Use interactive message format for CTA buttons
-  const interactiveMessage = buildInteractiveMessage(text, footer, urlButtons, callButtons, replyButtons);
-
-  await socket.sendMessage(ctx.jid, interactiveMessage as any);
+  await sendInteractiveMessage(socket, ctx.jid, {
+    text,
+    ...(footer ? { footer } : {}),
+    nativeFlowButtons,
+  });
 
   await db.insert(messageLog).values({
     id: crypto.randomUUID(),
@@ -399,58 +643,6 @@ async function sendButtonMessage(ctx: ExecutionContext, data: FlowNodeData): Pro
     status: "sent",
     createdAt: new Date(),
   });
-}
-
-function buildInteractiveMessage(
-  bodyText: string,
-  footerText: string | undefined,
-  urlButtons: FlowButton[],
-  callButtons: FlowButton[],
-  replyButtons: FlowButton[]
-) {
-  const nativeButtons = replyButtons.map((b, i) => ({
-    name: "quick_reply",
-    buttonParamsJson: JSON.stringify({
-      display_text: b.text,
-      id: b.id || `reply_${i}`,
-    }),
-  }));
-
-  const ctaButtons = [
-    ...urlButtons.map((b) => ({
-      name: "cta_url",
-      buttonParamsJson: JSON.stringify({
-        display_text: b.text,
-        url: b.url ?? "",
-        merchant_url: b.url ?? "",
-      }),
-    })),
-    ...callButtons.map((b) => ({
-      name: "cta_call",
-      buttonParamsJson: JSON.stringify({
-        display_text: b.text,
-        phone_number: b.phoneNumber ?? "",
-      }),
-    })),
-  ];
-
-  const allButtons = [...nativeButtons, ...ctaButtons];
-
-  return {
-    viewOnceMessage: {
-      message: {
-        interactiveMessage: {
-          body: { text: bodyText },
-          ...(footerText ? { footer: { text: footerText } } : {}),
-          header: { hasMediaAttachment: false },
-          nativeFlowMessage: {
-            buttons: allButtons,
-            messageParamsJson: "",
-          },
-        },
-      },
-    },
-  };
 }
 
 /**
@@ -464,9 +656,11 @@ export async function sendCtaButtonMessage(
   buttons: FlowButton[]
 ): Promise<void> {
   const socket = getSocketFor(userId);
-  const urlButtons = buttons.filter((b) => b.type === "url");
-  const callButtons = buttons.filter((b) => b.type === "call");
-  const replyButtons = buttons.filter((b) => b.type === "reply");
-  const msg = buildInteractiveMessage(text, footer, urlButtons, callButtons, replyButtons);
-  await socket.sendMessage(jid, msg as any);
+  const nativeFlowButtons = flowButtonsToNativeFlowButtons(buttons);
+
+  await sendInteractiveMessage(socket, jid, {
+    text,
+    ...(footer ? { footer } : {}),
+    nativeFlowButtons,
+  });
 }
