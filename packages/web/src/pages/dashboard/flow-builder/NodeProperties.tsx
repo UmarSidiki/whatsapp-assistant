@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { X, Plus, Trash2 } from "lucide-react";
-import type { FlowNodeData, FlowButton } from "./types";
+import type { FlowNodeData, FlowButton, ListSection, ListRow } from "./types";
 import { NODE_COLORS } from "./types";
 
 interface NodePropertiesProps {
@@ -206,7 +206,7 @@ function ButtonsFields({ data, update }: { data: FlowNodeData; update: (p: Parti
           <div key={btn.id} className="rounded border bg-background p-2 space-y-2">
             <div className="flex items-center gap-1.5">
               <Select value={btn.type} onValueChange={(v) => updateButton(idx, { type: v as FlowButton["type"] })}>
-                <SelectTrigger className="h-7 text-xs w-20">
+                <SelectTrigger className="h-7 text-xs w-24">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -214,6 +214,9 @@ function ButtonsFields({ data, update }: { data: FlowNodeData; update: (p: Parti
                   <SelectItem value="url">URL</SelectItem>
                   <SelectItem value="call">Call</SelectItem>
                   <SelectItem value="copy">Copy Code</SelectItem>
+                  <SelectItem value="list">List Menu</SelectItem>
+                  <SelectItem value="catalog">Catalog</SelectItem>
+                  <SelectItem value="location">Location</SelectItem>
                 </SelectContent>
               </Select>
               <Input
@@ -250,6 +253,12 @@ function ButtonsFields({ data, update }: { data: FlowNodeData; update: (p: Parti
                 onChange={(e) => updateButton(idx, { copyCode: e.target.value })}
               />
             )}
+            {btn.type === "list" && (
+              <ListButtonEditor
+                btn={btn}
+                onChange={(patch) => updateButton(idx, patch)}
+              />
+            )}
           </div>
         ))}
         {buttons.some((b) => b.type === "reply") && (
@@ -259,6 +268,101 @@ function ButtonsFields({ data, update }: { data: FlowNodeData; update: (p: Parti
         )}
       </div>
     </>
+  );
+}
+
+function ListButtonEditor({ btn, onChange }: { btn: FlowButton; onChange: (patch: Partial<FlowButton>) => void }) {
+  const sections = btn.listSections ?? [];
+
+  const addSection = () => {
+    const newSection: ListSection = { title: "", rows: [{ id: crypto.randomUUID(), title: "", description: "" }] };
+    onChange({ listSections: [...sections, newSection] });
+  };
+
+  const updateSection = (sIdx: number, patch: Partial<ListSection>) => {
+    const updated = sections.map((s, i) => (i === sIdx ? { ...s, ...patch } : s));
+    onChange({ listSections: updated });
+  };
+
+  const removeSection = (sIdx: number) => {
+    onChange({ listSections: sections.filter((_, i) => i !== sIdx) });
+  };
+
+  const addRow = (sIdx: number) => {
+    const newRow: ListRow = { id: crypto.randomUUID(), title: "", description: "" };
+    const updated = sections.map((s, i) =>
+      i === sIdx ? { ...s, rows: [...s.rows, newRow] } : s
+    );
+    onChange({ listSections: updated });
+  };
+
+  const updateRow = (sIdx: number, rIdx: number, patch: Partial<ListRow>) => {
+    const updated = sections.map((s, si) =>
+      si === sIdx
+        ? { ...s, rows: s.rows.map((r, ri) => (ri === rIdx ? { ...r, ...patch } : r)) }
+        : s
+    );
+    onChange({ listSections: updated });
+  };
+
+  const removeRow = (sIdx: number, rIdx: number) => {
+    const updated = sections.map((s, si) =>
+      si === sIdx ? { ...s, rows: s.rows.filter((_, ri) => ri !== rIdx) } : s
+    );
+    onChange({ listSections: updated });
+  };
+
+  return (
+    <div className="space-y-2 pl-1 border-l-2 border-blue-500/30">
+      <Input
+        className="h-7 text-xs"
+        placeholder="Menu title (e.g. Choose an option)"
+        value={btn.listTitle ?? ""}
+        onChange={(e) => onChange({ listTitle: e.target.value })}
+      />
+      {sections.map((section, sIdx) => (
+        <div key={sIdx} className="space-y-1.5 rounded border bg-muted/30 p-1.5">
+          <div className="flex items-center gap-1">
+            <Input
+              className="h-6 text-[11px] flex-1"
+              placeholder="Section title"
+              value={section.title ?? ""}
+              onChange={(e) => updateSection(sIdx, { title: e.target.value })}
+            />
+            <Button variant="ghost" size="icon" className="size-5 shrink-0" onClick={() => removeSection(sIdx)}>
+              <X className="size-3 text-destructive" />
+            </Button>
+          </div>
+          {section.rows.map((row, rIdx) => (
+            <div key={row.id} className="flex items-start gap-1 pl-2">
+              <div className="flex-1 space-y-1">
+                <Input
+                  className="h-6 text-[11px]"
+                  placeholder="Row title"
+                  value={row.title}
+                  onChange={(e) => updateRow(sIdx, rIdx, { title: e.target.value })}
+                />
+                <Input
+                  className="h-6 text-[11px]"
+                  placeholder="Description (optional)"
+                  value={row.description ?? ""}
+                  onChange={(e) => updateRow(sIdx, rIdx, { description: e.target.value })}
+                />
+              </div>
+              <Button variant="ghost" size="icon" className="size-5 shrink-0 mt-0.5" onClick={() => removeRow(sIdx, rIdx)}>
+                <Trash2 className="size-2.5 text-destructive" />
+              </Button>
+            </div>
+          ))}
+          <Button variant="ghost" size="sm" className="h-5 text-[10px] px-1.5 w-full" onClick={() => addRow(sIdx)}>
+            <Plus className="size-2.5 mr-0.5" /> Add Row
+          </Button>
+        </div>
+      ))}
+      <Button variant="outline" size="sm" className="h-6 text-[10px] px-2 w-full" onClick={addSection}>
+        <Plus className="size-2.5 mr-0.5" /> Add Section
+      </Button>
+    </div>
   );
 }
 

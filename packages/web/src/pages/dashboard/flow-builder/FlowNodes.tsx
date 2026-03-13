@@ -117,7 +117,7 @@ function ButtonsNodeComponent({ data, selected }: NodeProps) {
         <div className="mt-1.5 space-y-1">
           {buttons.slice(0, 3).map((btn) => (
             <div key={btn.id} className="flex items-center gap-1 text-[10px] bg-background/50 rounded px-1.5 py-0.5">
-              <span className={`size-1.5 rounded-full ${btn.type === "url" ? "bg-blue-400" : btn.type === "call" ? "bg-green-400" : btn.type === "copy" ? "bg-orange-400" : "bg-purple-400"}`} />
+              <span className={`size-1.5 rounded-full ${btn.type === "url" ? "bg-blue-400" : btn.type === "call" ? "bg-green-400" : btn.type === "copy" ? "bg-orange-400" : btn.type === "list" ? "bg-cyan-400" : btn.type === "catalog" ? "bg-yellow-400" : btn.type === "location" ? "bg-teal-400" : "bg-purple-400"}`} />
               {btn.text || "Untitled"}
             </div>
           ))}

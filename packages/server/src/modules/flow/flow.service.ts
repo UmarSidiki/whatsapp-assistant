@@ -32,13 +32,28 @@ export interface FlowNodeData {
   delaySeconds?: number;
 }
 
+export interface ListRow {
+  id: string;
+  title: string;
+  description?: string;
+  header?: string;
+}
+
+export interface ListSection {
+  title?: string;
+  rows: ListRow[];
+}
+
 export interface FlowButton {
   id: string;
-  type: "reply" | "url" | "call" | "copy";
+  type: "reply" | "url" | "call" | "copy" | "list" | "catalog" | "location";
   text: string;
   url?: string;
   phoneNumber?: string;
   copyCode?: string;
+  // List (single_select) fields
+  listTitle?: string;
+  listSections?: ListSection[];
 }
 
 export interface FlowNode {
@@ -526,6 +541,28 @@ function flowButtonsToNativeFlowButtons(buttons: FlowButton[]): Array<{ name: st
             copy_code: b.copyCode ?? "",
           }),
         };
+      case "list":
+        return {
+          name: "single_select",
+          buttonParamsJson: JSON.stringify({
+            title: b.listTitle || b.text || "Select",
+            sections: b.listSections ?? [],
+          }),
+        };
+      case "catalog":
+        return {
+          name: "cta_catalog",
+          buttonParamsJson: JSON.stringify({
+            display_text: b.text || "View Catalog",
+          }),
+        };
+      case "location":
+        return {
+          name: "send_location",
+          buttonParamsJson: JSON.stringify({
+            display_text: b.text || "Share Location",
+          }),
+        };
       default:
         return {
           name: "quick_reply",
@@ -540,8 +577,6 @@ function flowButtonsToNativeFlowButtons(buttons: FlowButton[]): Array<{ name: st
 
 /**
  * Build the binary node structure WhatsApp requires for interactive messages.
- * This injects `biz` / `interactive` / `native_flow` nodes into `additionalNodes`
- * so that relayMessage sends the correct protocol-level wrapper.
  */
 function getButtonArgs(message: Record<string, unknown>): BinaryNode {
   const interactiveMsg = message.interactiveMessage as Record<string, unknown> | undefined;
@@ -572,8 +607,6 @@ function getButtonArgs(message: Record<string, unknown>): BinaryNode {
 
 /**
  * Send an interactive message with CTA buttons using direct Baileys relayMessage.
- * Bypasses sock.sendMessage (which lacks the binary node injection WhatsApp needs)
- * and instead builds the WAMessage manually + relays with additionalNodes.
  */
 async function sendInteractiveMessage(
   sock: ReturnType<typeof getSocketFor>,

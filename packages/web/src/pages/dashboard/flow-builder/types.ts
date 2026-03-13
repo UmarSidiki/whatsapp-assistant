@@ -1,12 +1,27 @@
 // Shared types for the flow builder
 
+export interface ListRow {
+  id: string;
+  title: string;
+  description?: string;
+  header?: string;
+}
+
+export interface ListSection {
+  title?: string;
+  rows: ListRow[];
+}
+
 export interface FlowButton {
   id: string;
-  type: "reply" | "url" | "call" | "copy";
+  type: "reply" | "url" | "call" | "copy" | "list" | "catalog" | "location";
   text: string;
   url?: string;
   phoneNumber?: string;
   copyCode?: string;
+  // List (single_select) fields
+  listTitle?: string;
+  listSections?: ListSection[];
 }
 
 export interface FlowNodeData {
