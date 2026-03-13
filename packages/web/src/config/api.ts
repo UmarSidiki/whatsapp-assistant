@@ -14,27 +14,54 @@ export const getBaseUrl = () => {
 export const API_BASE_URL = getBaseUrl();
 
 let cachedConfig: AppConfig | null = null;
+let inFlightConfig: Promise<AppConfig> | null = null;
 
-export const getAppConfig = async (): Promise<AppConfig> => {
-  if (cachedConfig) return cachedConfig;
+function toConfig(value: unknown, fallback: string): AppConfig {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "apiUrl" in value &&
+    typeof (value as { apiUrl?: unknown }).apiUrl === "string"
+  ) {
+    const apiUrl = (value as { apiUrl: string }).apiUrl.trim();
+    if (apiUrl) return { apiUrl };
+  }
+  return { apiUrl: fallback };
+}
 
+async function loadAppConfig(): Promise<AppConfig> {
   const credUrl = import.meta.env.VITE_API_CREDENTIALS_URL;
   const fallback = API_BASE_URL;
 
   if (!credUrl) {
-    cachedConfig = { apiUrl: fallback };
-    return cachedConfig;
+    return { apiUrl: fallback };
   }
 
   try {
     const res = await fetch(credUrl);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch app config: ${res.status}`);
+    }
     const json = await res.json();
-    cachedConfig = { apiUrl: json.apiUrl ?? fallback };
+    return toConfig(json, fallback);
   } catch {
-    cachedConfig = { apiUrl: fallback };
+    return { apiUrl: fallback };
   }
+}
 
-  return cachedConfig;
+export const getAppConfig = async (): Promise<AppConfig> => {
+  if (cachedConfig) return cachedConfig;
+  if (!inFlightConfig) {
+    inFlightConfig = loadAppConfig()
+      .then((config) => {
+        cachedConfig = config;
+        return config;
+      })
+      .finally(() => {
+        inFlightConfig = null;
+      });
+  }
+  return inFlightConfig;
 };
 
 // Kept for backwards-compatibility

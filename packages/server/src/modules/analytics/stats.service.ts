@@ -1,6 +1,6 @@
 import { db } from "../../database";
 import { messageLog, autoReplyRule, scheduledMessage, template } from "../../database/schema";
-import { eq, gte, and, count, sql } from "drizzle-orm";
+import { eq, and, count, sql } from "drizzle-orm";
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
@@ -16,79 +16,96 @@ export interface Stats {
   templates: number;
 }
 
+const STATS_CACHE_TTL_MS = 5_000;
+const DAY_SECONDS = 24 * 60 * 60;
+const statsCache = new Map<string, { value: Stats; expiresAt: number }>();
+
 /** Return dashboard statistics for a specific user. */
 export async function getStats(userId: string): Promise<Stats> {
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
+  const nowMs = Date.now();
+  const cached = statsCache.get(userId);
+  if (cached && cached.expiresAt > nowMs) {
+    return cached.value;
+  }
 
-  const userFilter = userId
-    ? sql`AND ${messageLog.userId} = ${userId}`
-    : sql``;
+  const now = new Date();
+  const startOfTodayUnix = Math.floor(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 1000
+  );
+  const sevenDaysAgoUnix = startOfTodayUnix - (6 * DAY_SECONDS);
+  const dateExpr = sql<string>`date(${messageLog.createdAt}, 'unixepoch')`;
 
-  // Aggregate totals from message_log
-  const [totals] = await db
-    .select({
-      totalSent: sql<number>`SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END)`,
-      totalFailed: sql<number>`SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END)`,
-      sentToday: sql<number>`SUM(CASE WHEN status='sent' AND createdAt >= ${startOfToday.getTime()} THEN 1 ELSE 0 END)`,
-      failedToday: sql<number>`SUM(CASE WHEN status='failed' AND createdAt >= ${startOfToday.getTime()} THEN 1 ELSE 0 END)`,
-    })
-    .from(messageLog)
-    .where(eq(messageLog.userId, userId));
+  const [totals, recentDaily, pendingResult, rulesResult, templateResult] = await Promise.all([
+    db
+      .select({
+        totalSent: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'sent' THEN 1 ELSE 0 END), 0)`,
+        totalFailed: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'failed' THEN 1 ELSE 0 END), 0)`,
+        sentToday: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'sent' AND ${messageLog.createdAt} >= ${startOfTodayUnix} THEN 1 ELSE 0 END), 0)`,
+        failedToday: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'failed' AND ${messageLog.createdAt} >= ${startOfTodayUnix} THEN 1 ELSE 0 END), 0)`,
+      })
+      .from(messageLog)
+      .where(eq(messageLog.userId, userId))
+      .then((rows) => rows[0]),
+    db
+      .select({
+        date: dateExpr,
+        sent: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'sent' THEN 1 ELSE 0 END), 0)`,
+        failed: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'failed' THEN 1 ELSE 0 END), 0)`,
+      })
+      .from(messageLog)
+      .where(and(
+        eq(messageLog.userId, userId),
+        sql`${messageLog.createdAt} >= ${sevenDaysAgoUnix}`,
+      ))
+      .groupBy(dateExpr)
+      .orderBy(dateExpr),
+    db
+      .select({ pending: count() })
+      .from(scheduledMessage)
+      .where(and(eq(scheduledMessage.status, "pending"), eq(scheduledMessage.userId, userId)))
+      .then((rows) => rows[0]),
+    db
+      .select({ rules: count() })
+      .from(autoReplyRule)
+      .where(eq(autoReplyRule.userId, userId))
+      .then((rows) => rows[0]),
+    db
+      .select({ tpl: count() })
+      .from(template)
+      .where(eq(template.userId, userId))
+      .then((rows) => rows[0]),
+  ]);
 
-  // Last 7 days daily activity
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  sevenDaysAgo.setHours(0, 0, 0, 0);
-
-  const recentLogs = await db
-    .select({ status: messageLog.status, createdAt: messageLog.createdAt })
-    .from(messageLog)
-    .where(and(eq(messageLog.userId, userId), gte(messageLog.createdAt, sevenDaysAgo)))
-    .all();
-
-  // Group by day
   const dayMap = new Map<string, { sent: number; failed: number }>();
   for (let i = 6; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+    const d = new Date((startOfTodayUnix - (i * DAY_SECONDS)) * 1000);
     const key = d.toISOString().slice(0, 10);
     dayMap.set(key, { sent: 0, failed: 0 });
   }
-  for (const log of recentLogs) {
-    const key = new Date(log.createdAt).toISOString().slice(0, 10);
-    const day = dayMap.get(key);
-    if (day) {
-      if (log.status === "sent") day.sent++;
-      else day.failed++;
-    }
+  for (const row of recentDaily) {
+    if (!row.date || !dayMap.has(row.date)) continue;
+    dayMap.set(row.date, {
+      sent: Number(row.sent ?? 0),
+      failed: Number(row.failed ?? 0),
+    });
   }
+
   const dailyActivity = Array.from(dayMap.entries()).map(([date, counts]) => ({
     date,
     ...counts,
   }));
 
-  const [{ pending }] = await db
-    .select({ pending: count() })
-    .from(scheduledMessage)
-    .where(and(eq(scheduledMessage.status, "pending"), eq(scheduledMessage.userId, userId)));
-
-  const [{ rules }] = await db
-    .select({ rules: count() })
-    .from(autoReplyRule)
-    .where(eq(autoReplyRule.userId, userId));
-
-  const [{ tpl }] = await db
-    .select({ tpl: count() })
-    .from(template)
-    .where(eq(template.userId, userId));
-
-  return {
-    totalSent: totals?.totalSent ?? 0,
-    totalFailed: totals?.totalFailed ?? 0,
-    sentToday: totals?.sentToday ?? 0,
-    failedToday: totals?.failedToday ?? 0,
+  const stats: Stats = {
+    totalSent: Number(totals?.totalSent ?? 0),
+    totalFailed: Number(totals?.totalFailed ?? 0),
+    sentToday: Number(totals?.sentToday ?? 0),
+    failedToday: Number(totals?.failedToday ?? 0),
     dailyActivity,
-    scheduledPending: pending,
-    autoReplyRules: rules,
-    templates: tpl,
+    scheduledPending: pendingResult?.pending ?? 0,
+    autoReplyRules: rulesResult?.rules ?? 0,
+    templates: templateResult?.tpl ?? 0,
   };
+
+  statsCache.set(userId, { value: stats, expiresAt: nowMs + STATS_CACHE_TTL_MS });
+  return stats;
 }

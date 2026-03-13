@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -22,16 +22,32 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { signOut, useSession } from "@/lib/auth-client";
 import { useApiUrl } from "@/hooks/useApi";
-import OverviewPage from "./dashboard/OverviewPage";
-import { ConnectionTab } from "./dashboard/ConnectionTab";
-import { BulkMessagesTab } from "./dashboard/BulkMessagesTab";
-import { ScheduleTab } from "./dashboard/ScheduleTab";
-import { AutoReplyTab } from "./dashboard/AutoReplyTab";
-import { TemplatesTab } from "./dashboard/TemplatesTab";
-import { AIAssistantTab } from "./dashboard/AIAssistantTab";
-import { FlowBuilderTab } from "./dashboard/FlowBuilderTab";
+
+const OverviewPage = lazy(() => import("./dashboard/OverviewPage"));
+const ConnectionTab = lazy(() =>
+  import("./dashboard/ConnectionTab").then((mod) => ({ default: mod.ConnectionTab }))
+);
+const BulkMessagesTab = lazy(() =>
+  import("./dashboard/BulkMessagesTab").then((mod) => ({ default: mod.BulkMessagesTab }))
+);
+const ScheduleTab = lazy(() =>
+  import("./dashboard/ScheduleTab").then((mod) => ({ default: mod.ScheduleTab }))
+);
+const AutoReplyTab = lazy(() =>
+  import("./dashboard/AutoReplyTab").then((mod) => ({ default: mod.AutoReplyTab }))
+);
+const TemplatesTab = lazy(() =>
+  import("./dashboard/TemplatesTab").then((mod) => ({ default: mod.TemplatesTab }))
+);
+const AIAssistantTab = lazy(() =>
+  import("./dashboard/AIAssistantTab").then((mod) => ({ default: mod.AIAssistantTab }))
+);
+const FlowBuilderTab = lazy(() =>
+  import("./dashboard/FlowBuilderTab").then((mod) => ({ default: mod.FlowBuilderTab }))
+);
 
 type Page = "overview" | "connection" | "bulk" | "schedule" | "auto-reply" | "flow-builder" | "templates" | "ai-assistant";
+type TabProps = { apiUrl: string };
 
 const NAV_ITEMS: { id: Page; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -55,12 +71,24 @@ const PAGE_TITLES: Record<Page, string> = {
   "ai-assistant": "AI Assistant",
 };
 
+const PAGE_COMPONENTS: Record<Page, React.ComponentType<TabProps>> = {
+  overview: OverviewPage,
+  connection: ConnectionTab,
+  bulk: BulkMessagesTab,
+  schedule: ScheduleTab,
+  "auto-reply": AutoReplyTab,
+  "flow-builder": FlowBuilderTab,
+  templates: TemplatesTab,
+  "ai-assistant": AIAssistantTab,
+};
+
 export default function DashboardPage() {
   const { data: session } = useSession();
   const navigate = useNavigate();
   const apiUrl = useApiUrl();
   const [activePage, setActivePage] = useState<Page>("overview");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const ActivePage = PAGE_COMPONENTS[activePage];
 
   const handleSignOut = async () => {
     await signOut();
@@ -156,14 +184,16 @@ export default function DashboardPage() {
             <div>
               <h2 className="text-2xl font-bold">{PAGE_TITLES[activePage]}</h2>
             </div>
-            {activePage === "overview" && <OverviewPage apiUrl={apiUrl} />}
-            {activePage === "connection" && <ConnectionTab apiUrl={apiUrl} />}
-            {activePage === "bulk" && <BulkMessagesTab apiUrl={apiUrl} />}
-            {activePage === "schedule" && <ScheduleTab apiUrl={apiUrl} />}
-            {activePage === "auto-reply" && <AutoReplyTab apiUrl={apiUrl} />}
-            {activePage === "flow-builder" && <FlowBuilderTab apiUrl={apiUrl} />}
-            {activePage === "templates" && <TemplatesTab apiUrl={apiUrl} />}
-            {activePage === "ai-assistant" && <AIAssistantTab apiUrl={apiUrl} />}
+            <Suspense
+              fallback={(
+                <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  Loading {PAGE_TITLES[activePage]}...
+                </div>
+              )}
+            >
+              <ActivePage apiUrl={apiUrl} />
+            </Suspense>
           </div>
         </main>
       </div>
