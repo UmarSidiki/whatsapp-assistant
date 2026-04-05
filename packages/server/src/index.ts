@@ -8,6 +8,7 @@ import inviteCodes from './config/invite-codes.json'
 import { restoreScheduledMessages } from './modules/scheduling/schedule.service'
 import { autoReconnectAll } from './modules/whatsapp/wa-connection.service'
 import { startAIMaintenanceScheduler } from './modules/ai/ai-maintenance.service'
+import { apiGuard } from './core/api-guard-middleware'
 
 const app = new Hono()
 
@@ -56,6 +57,10 @@ app.get('/api/health', (c) => {
 // Serve static frontend files
 import { serveStatic } from '@hono/node-server/serve-static'
 import { serve } from '@hono/node-server'
+
+// API guard: prevent unmatched /api/* routes from falling through to SPA
+app.use('*', apiGuard)
+
 app.use('/*', serveStatic({ root: '../web/dist' }))
 app.use('*', serveStatic({ path: '../web/dist/index.html' })) // SPA fallback
 

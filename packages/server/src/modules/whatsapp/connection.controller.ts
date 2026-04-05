@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { handle } from "../../core/handle";
 import * as connectionService from "./wa-connection.service";
+import { logger } from "../../core/logger";
 
 export async function initConnection(c: Context) {
   return handle(c, async () => {
@@ -18,6 +19,7 @@ export async function getStatus(c: Context) {
 export async function disconnect(c: Context) {
   return handle(c, async () => {
     const userId = c.get("userId") as string;
+    logger.info("User disconnected WhatsApp", { userId });
     await connectionService.disconnect(userId);
     return { message: "Disconnected" };
   });

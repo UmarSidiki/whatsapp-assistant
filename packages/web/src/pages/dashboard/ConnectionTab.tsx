@@ -6,6 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { fetchJson } from "@/lib/api-utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 type WAStatus = "idle" | "waiting_qr" | "connected" | "disconnected";
 
@@ -41,8 +48,10 @@ export function ConnectionTab({ apiUrl }: { apiUrl: string }) {
     stopPolling();
     pollRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`${url}/api/whatsapp/status`, { credentials: "include" });
-        const data = await res.json();
+        const data = await fetchJson<{ status: WAStatus; qr?: string }>(
+          `${url}/api/whatsapp/status`, 
+          { credentials: "include" }
+        );
         pollFailuresRef.current = 0;
         setStatus(data.status);
         setQr(data.qr);
@@ -61,8 +70,10 @@ export function ConnectionTab({ apiUrl }: { apiUrl: string }) {
   useEffect(() => {
     const syncStatus = async () => {
       try {
-        const res = await fetch(`${apiUrl}/api/whatsapp/status`, { credentials: "include" });
-        const data = await res.json();
+        const data = await fetchJson<{ status: WAStatus; qr?: string }>(
+          `${apiUrl}/api/whatsapp/status`, 
+          { credentials: "include" }
+        );
         setStatus(data.status);
         setQr(data.qr);
         if (data.status === "waiting_qr") {
@@ -157,7 +168,16 @@ export function ConnectionTab({ apiUrl }: { apiUrl: string }) {
               </Button>
             )}
             {(status === "waiting_qr" || status === "connected") && (
-              <Button variant="destructive" onClick={handleDisconnect}>Disconnect</Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="destructive" onClick={handleDisconnect}>Disconnect</Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="max-w-xs">This will stop your WhatsApp bot and require you to scan the QR code again to reconnect.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
           </div>
         </CardContent>

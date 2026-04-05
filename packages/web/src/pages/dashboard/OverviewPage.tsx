@@ -15,6 +15,7 @@ import {
   YAxis,
   CartesianGrid,
 } from "recharts";
+import { fetchJson, ApiResponseError } from "@/lib/api-utils";
 
 interface Stats {
   totalSent: number;
@@ -61,13 +62,17 @@ export default function OverviewPage({ apiUrl }: { apiUrl: string }) {
 
   const fetchStats = async () => {
     try {
-      const res = await fetch(`${apiUrl}/api/whatsapp/stats`, { credentials: "include" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: Stats = await res.json();
+      const data = await fetchJson<Stats>(`${apiUrl}/api/whatsapp/stats`, { 
+        credentials: "include" 
+      });
       setStats(data);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load stats");
+      if (e instanceof ApiResponseError) {
+        setError(e.message);
+      } else {
+        setError(e instanceof Error ? e.message : "Failed to load stats");
+      }
     } finally {
       setLoading(false);
     }
