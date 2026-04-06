@@ -35,8 +35,9 @@ jobs:
 
             # 4. Install dependencies and Build using Bun
             bun install
-            bun run db:migrate --if-present
-            bun run build --if-present
+            bun run db:migrate
+            bun run db:push
+            bun run build
 
             # 5. Restart the service
             sudo systemctl restart whatsapp-assistant
