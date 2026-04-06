@@ -54,7 +54,7 @@ export function AdminLayout<T extends string>({
   return (
     <div className="flex h-svh flex-col overflow-hidden bg-background">
       {/* Header */}
-      <header className="wa-header flex h-[56px] shrink-0 items-center justify-between px-4">
+      <header className="wa-header flex h-14 shrink-0 items-center justify-between px-4">
         <div className="flex items-center gap-3">
           {/* Mobile menu */}
           <button
