@@ -66,12 +66,12 @@ export function serializeInvoice(row: InvoiceRow): InvoiceResponse {
 }
 
 export async function listSubscriptions(): Promise<SubscriptionResponse[]> {
-  const rows = await db.select().from(subscription).orderBy(desc(subscription.updatedAt)).all();
+  const rows = await db.select().from(subscription).orderBy(desc(subscription.updatedAt));
   return rows.map(serializeSubscription);
 }
 
 export async function getSubscriptionById(id: string): Promise<SubscriptionRow> {
-  const row = await db.select().from(subscription).where(eq(subscription.id, id)).get();
+  const [row] = await db.select().from(subscription).where(eq(subscription.id, id)).limit(1);
   if (!row) {
     throw new ServiceError("Subscription not found", 404);
   }
@@ -91,12 +91,12 @@ export async function updateSubscription(id: string, updates: Partial<Pick<Subsc
 }
 
 export async function listInvoices(): Promise<InvoiceResponse[]> {
-  const rows = await db.select().from(invoice).orderBy(desc(invoice.periodEnd)).all();
+  const rows = await db.select().from(invoice).orderBy(desc(invoice.periodEnd));
   return rows.map(serializeInvoice);
 }
 
 export async function getInvoiceById(id: string): Promise<InvoiceRow> {
-  const row = await db.select().from(invoice).where(eq(invoice.id, id)).get();
+  const [row] = await db.select().from(invoice).where(eq(invoice.id, id)).limit(1);
   if (!row) {
     throw new ServiceError("Invoice not found", 404);
   }
@@ -113,17 +113,19 @@ export async function createInvoice(input: {
   periodEnd: Date;
   paidAt: Date | null;
 }): Promise<InvoiceResponse> {
-  const userRow = await db.select({ id: user.id }).from(user).where(eq(user.id, input.userId)).get();
+  const [userRow] = await db.select({ id: user.id }).from(user).where(eq(user.id, input.userId)).limit(1);
   if (!userRow) {
     throw new ServiceError("User not found", 404);
   }
 
   if (input.subscriptionId) {
-    const subscriptionRow = await db
+    const subscriptionRows = await db
       .select({ id: subscription.id, userId: subscription.userId })
       .from(subscription)
       .where(eq(subscription.id, input.subscriptionId))
-      .get();
+      .limit(1);
+
+    const subscriptionRow = subscriptionRows[0];
 
     if (!subscriptionRow) {
       throw new ServiceError("Subscription not found", 404);

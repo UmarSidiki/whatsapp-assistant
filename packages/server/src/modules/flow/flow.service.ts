@@ -93,8 +93,7 @@ export async function getFlows(userId: string): Promise<ChatbotFlow[]> {
     .select()
     .from(chatbotFlow)
     .where(eq(chatbotFlow.userId, userId))
-    .orderBy(desc(chatbotFlow.priority))
-    .all();
+    .orderBy(desc(chatbotFlow.priority));
 
   return rows.map((r) => ({
     id: r.id,

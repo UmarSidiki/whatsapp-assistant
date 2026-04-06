@@ -18,8 +18,7 @@ export interface Template {
 export async function getTemplates(userId: string): Promise<Template[]> {
   const rows = await db.select().from(template)
     .where(eq(template.userId, userId))
-    .orderBy(desc(template.updatedAt))
-    .all();
+    .orderBy(desc(template.updatedAt));
   return rows.map(r => ({
     id: r.id,
     name: r.name,
@@ -37,8 +36,7 @@ export async function createTemplate(userId: string, name: string, content: stri
   }
 
   const existing = await db.select({ name: template.name }).from(template)
-    .where(eq(template.userId, userId))
-    .all();
+    .where(eq(template.userId, userId));
   const duplicate = existing.some((row) =>
     row.name.trim().toLowerCase() === normalizedName.toLowerCase()
   );
@@ -64,9 +62,9 @@ export async function createTemplate(userId: string, name: string, content: stri
 }
 
 export async function deleteTemplate(userId: string, id: string): Promise<void> {
-  const existing = await db.select().from(template)
+  const [existing] = await db.select().from(template)
     .where(and(eq(template.id, id), eq(template.userId, userId)))
-    .get();
+    .limit(1);
   if (!existing) throw new ServiceError("Template not found", 404);
   await db.delete(template).where(eq(template.id, id));
 }

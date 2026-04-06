@@ -106,7 +106,7 @@ function buildLikeFilter(column: typeof user.email | typeof user.name, value: st
 }
 
 async function getUserRowOrThrow(id: string): Promise<UserRow> {
-  const row = await db.select().from(user).where(eq(user.id, id)).get();
+  const [row] = await db.select().from(user).where(eq(user.id, id)).limit(1);
   if (!row) {
     throw new ServiceError("User not found", 404);
   }
@@ -147,13 +147,12 @@ export async function listUsers(filters: {
       .where(whereClause)
       .orderBy(desc(user.createdAt), desc(user.id))
       .limit(filters.limit)
-      .offset(filters.offset)
-      .all(),
+      .offset(filters.offset),
     db
       .select({ count: sql<number>`count(*)` })
       .from(user)
       .where(whereClause)
-      .get(),
+      .then((rows) => rows[0]),
   ]);
 
   return {
@@ -170,16 +169,14 @@ export async function getUserDetails(id: string): Promise<UserDetails> {
     .from(trialUsage)
     .where(eq(trialUsage.userId, id))
     .orderBy(desc(trialUsage.trialStartedAt), desc(trialUsage.createdAt))
-    .limit(1)
-    .all();
+    .limit(1);
 
   const [subscriptionRow] = await db
     .select()
     .from(subscription)
     .where(eq(subscription.userId, id))
     .orderBy(desc(subscription.updatedAt), desc(subscription.startedAt))
-    .limit(1)
-    .all();
+    .limit(1);
 
   return {
     ...serializeUser(userRow),
@@ -194,8 +191,7 @@ export async function updateUserRole(id: string, role: UserRole): Promise<UserLi
   await db
     .update(user)
     .set({ role, updatedAt: new Date() })
-    .where(eq(user.id, id))
-    .run();
+    .where(eq(user.id, id));
 
   return {
     ...serializeUser({ ...userRow, role }),
@@ -210,8 +206,7 @@ export async function setUserSuspension(id: string, suspended: boolean): Promise
   await db
     .update(user)
     .set({ suspendedAt, updatedAt: new Date() })
-    .where(eq(user.id, id))
-    .run();
+    .where(eq(user.id, id));
 
   return {
     ...serializeUser({ ...userRow, suspendedAt }),
@@ -225,13 +220,13 @@ export async function updateUsersRole(userIds: string[], role: UserRole): Promis
     return 0;
   }
 
-  const result = await db
+  const updatedRows = await db
     .update(user)
     .set({ role, updatedAt: new Date() })
     .where(inArray(user.id, userIds))
-    .run();
+    .returning({ id: user.id });
 
-  return result.changes ?? 0;
+  return updatedRows.length;
 }
 
 export async function setUsersSuspension(userIds: string[], suspended: boolean): Promise<number> {
@@ -240,11 +235,11 @@ export async function setUsersSuspension(userIds: string[], suspended: boolean):
   }
 
   const suspendedAt = suspended ? new Date() : null;
-  const result = await db
+  const updatedRows = await db
     .update(user)
     .set({ suspendedAt, updatedAt: new Date() })
     .where(inArray(user.id, userIds))
-    .run();
+    .returning({ id: user.id });
 
-  return result.changes ?? 0;
+  return updatedRows.length;
 }

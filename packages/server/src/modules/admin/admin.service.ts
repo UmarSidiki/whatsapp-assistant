@@ -10,7 +10,7 @@ import {
 import { getAllSessions, type WAStatus } from "../whatsapp/wa-socket";
 import { normalizeTrialPhoneNumber } from "../../core/trial";
 
-const DAY_SECONDS = 24 * 60 * 60;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface AdminOverview {
   totalUsers: number;
@@ -102,9 +102,9 @@ function toMb(value: number): number {
 }
 
 export async function getAdminOverview(): Promise<AdminOverview> {
-  const nowUnix = Math.floor(Date.now() / 1000);
-  const last24HoursUnix = nowUnix - DAY_SECONDS;
-  const last7DaysUnix = nowUnix - (6 * DAY_SECONDS);
+  const nowMs = Date.now();
+  const last24Hours = new Date(nowMs - DAY_MS);
+  const last7Days = new Date(nowMs - (6 * DAY_MS));
 
   const [
     totalUsersResult,
@@ -118,12 +118,12 @@ export async function getAdminOverview(): Promise<AdminOverview> {
     db
       .select({ sentLast24h: count() })
       .from(messageLog)
-      .where(andSentSince(last24HoursUnix))
+      .where(andSentSince(last24Hours))
       .then((rows) => rows[0]),
     db
       .select({ sentLast7d: count() })
       .from(messageLog)
-      .where(andSentSince(last7DaysUnix))
+      .where(andSentSince(last7Days))
       .then((rows) => rows[0]),
     Promise.all([
       db.select({ totalInvoices: count() }).from(invoice).then((rows) => rows[0]),
@@ -361,6 +361,7 @@ function getActiveWaConnections(): number {
   return Array.from(getAllSessions().values()).filter((session) => session.status === "connected").length;
 }
 
-function andSentSince(sinceUnix: number) {
-  return sql`${messageLog.status} = 'sent' AND ${messageLog.createdAt} >= ${sinceUnix}`;
+function andSentSince(since: Date) {
+  const sinceIso = since.toISOString();
+  return sql`${messageLog.status} = 'sent' AND ${messageLog.createdAt} >= ${sinceIso}`;
 }

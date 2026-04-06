@@ -11,6 +11,10 @@ import { autoReconnectAll } from './modules/whatsapp/wa-connection.service'
 import { startAIMaintenanceScheduler } from './modules/ai/ai-maintenance.service'
 import { apiGuard } from './core/api-guard-middleware'
 
+declare const Bun: {
+  serve: (options: { fetch: typeof app.fetch; port: number }) => unknown
+}
+
 const app = new Hono()
 
 // Auto-reconnect all WhatsApp sessions from stored auth
@@ -99,8 +103,7 @@ app.get('/api/health', (c) => {
 })
 
 // Serve static frontend files
-import { serveStatic } from '@hono/node-server/serve-static'
-import { serve } from '@hono/node-server'
+import { serveStatic } from 'hono/bun'
 
 // API guard: prevent unmatched /api/* routes from falling through to SPA
 app.use('*', apiGuard)
@@ -109,9 +112,9 @@ app.use('/*', serveStatic({ root: '../web/dist' }))
 app.use('*', serveStatic({ path: '../web/dist/index.html' })) // SPA fallback
 
 const port = Number(process.env.PORT || 3000)
-serve({
+
+console.log(`Server is running on http://localhost:${port}`)
+Bun.serve({
   fetch: app.fetch,
-  port
-}, (info) => {
-  console.log(`Server is running on http://localhost:${info.port}`)
+  port,
 })

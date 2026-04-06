@@ -1,24 +1,24 @@
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, boolean, timestamp, index } from "drizzle-orm/pg-core";
 
-export const user = sqliteTable("user", {
+export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name"),
   email: text("email").unique(),
-  emailVerified: integer("emailVerified", { mode: "boolean" }),
+  emailVerified: boolean("emailVerified"),
   image: text("image"),
-  role: text("role", { enum: ["user", "admin"] }).notNull().default("user"),
-  tier: text("tier", { enum: ["marketing", "management"] }).default("marketing"),
-  suspendedAt: integer("suspendedAt", { mode: "timestamp" }),
-  createdAt: integer("createdAt", { mode: "timestamp" }),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }),
+  role: text("role").$type<"user" | "admin">().notNull().default("user"),
+  tier: text("tier").$type<"marketing" | "management">().default("marketing"),
+  suspendedAt: timestamp("suspendedAt", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }),
 });
 
-export const session = sqliteTable("session", {
+export const session = pgTable("session", {
   id: text("id").primaryKey(),
-  expiresAt: integer("expiresAt", { mode: "timestamp" }),
+  expiresAt: timestamp("expiresAt", { withTimezone: true, mode: "date" }),
   token: text("token").unique(),
-  createdAt: integer("createdAt", { mode: "timestamp" }),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }),
   ipAddress: text("ipAddress"),
   userAgent: text("userAgent"),
   userId: text("userId")
@@ -26,7 +26,7 @@ export const session = sqliteTable("session", {
     .references(() => user.id),
 });
 
-export const account = sqliteTable("account", {
+export const account = pgTable("account", {
   id: text("id").primaryKey(),
   accountId: text("accountId").notNull(),
   providerId: text("providerId").notNull(),
@@ -36,28 +36,26 @@ export const account = sqliteTable("account", {
   accessToken: text("accessToken"),
   refreshToken: text("refreshToken"),
   idToken: text("idToken"),
-  accessTokenExpiresAt: integer("accessTokenExpiresAt", { mode: "timestamp" }),
-  refreshTokenExpiresAt: integer("refreshTokenExpiresAt", {
-    mode: "timestamp",
-  }),
+  accessTokenExpiresAt: timestamp("accessTokenExpiresAt", { withTimezone: true, mode: "date" }),
+  refreshTokenExpiresAt: timestamp("refreshTokenExpiresAt", { withTimezone: true, mode: "date" }),
   scope: text("scope"),
   password: text("password"),
-  createdAt: integer("createdAt", { mode: "timestamp" }),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }),
 });
 
-export const verification = sqliteTable("verification", {
+export const verification = pgTable("verification", {
   id: text("id").primaryKey(),
   identifier: text("identifier").notNull(),
   value: text("value").notNull(),
-  expiresAt: integer("expiresAt", { mode: "timestamp" }),
-  createdAt: integer("createdAt", { mode: "timestamp" }),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }),
+  expiresAt: timestamp("expiresAt", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }),
 });
 
 // ─── Admin Tables ─────────────────────────────────────────────────────────────
 
-export const adminAuditLog = sqliteTable("admin_audit_log", {
+export const adminAuditLog = pgTable("admin_audit_log", {
   id: text("id").primaryKey(),
   actorUserId: text("actorUserId")
     .notNull()
@@ -68,42 +66,42 @@ export const adminAuditLog = sqliteTable("admin_audit_log", {
   metadata: text("metadata"),
   ipAddress: text("ipAddress"),
   userAgent: text("userAgent"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("admin_audit_log_actor_user_idx").on(t.actorUserId),
   index("admin_audit_log_created_at_idx").on(t.createdAt),
 ]);
 
-export const featureFlag = sqliteTable("feature_flag", {
+export const featureFlag = pgTable("feature_flag", {
   id: text("id").primaryKey(),
   key: text("key").notNull().unique(),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  enabled: boolean("enabled").notNull().default(false),
   description: text("description"),
   updatedBy: text("updatedBy")
     .notNull()
     .references(() => user.id),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("feature_flag_updated_by_idx").on(t.updatedBy),
 ]);
 
-export const subscription = sqliteTable("subscription", {
+export const subscription = pgTable("subscription", {
   id: text("id").primaryKey(),
   userId: text("userId")
     .notNull()
     .references(() => user.id),
   plan: text("plan").notNull(),
   status: text("status").notNull(),
-  startedAt: integer("startedAt", { mode: "timestamp" }).notNull(),
-  endsAt: integer("endsAt", { mode: "timestamp" }),
-  trialUsed: integer("trialUsed", { mode: "boolean" }).notNull().default(false),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+  startedAt: timestamp("startedAt", { withTimezone: true, mode: "date" }).notNull(),
+  endsAt: timestamp("endsAt", { withTimezone: true, mode: "date" }),
+  trialUsed: boolean("trialUsed").notNull().default(false),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("subscription_user_idx").on(t.userId),
   index("subscription_status_idx").on(t.status),
 ]);
 
-export const invoice = sqliteTable("invoice", {
+export const invoice = pgTable("invoice", {
   id: text("id").primaryKey(),
   userId: text("userId")
     .notNull()
@@ -112,23 +110,23 @@ export const invoice = sqliteTable("invoice", {
   amount: integer("amount").notNull(),
   currency: text("currency").notNull(),
   status: text("status").notNull(),
-  periodStart: integer("periodStart", { mode: "timestamp" }).notNull(),
-  periodEnd: integer("periodEnd", { mode: "timestamp" }).notNull(),
-  paidAt: integer("paidAt", { mode: "timestamp" }),
+  periodStart: timestamp("periodStart", { withTimezone: true, mode: "date" }).notNull(),
+  periodEnd: timestamp("periodEnd", { withTimezone: true, mode: "date" }).notNull(),
+  paidAt: timestamp("paidAt", { withTimezone: true, mode: "date" }),
 }, (t) => [
   index("invoice_user_idx").on(t.userId),
   index("invoice_subscription_idx").on(t.subscriptionId),
   index("invoice_status_idx").on(t.status),
 ]);
 
-export const securityEvent = sqliteTable("security_event", {
+export const securityEvent = pgTable("security_event", {
   id: text("id").primaryKey(),
   type: text("type").notNull(),
   severity: text("severity").notNull(),
   userId: text("userId").references(() => user.id),
   ipAddress: text("ipAddress"),
   detail: text("detail").notNull(),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("security_event_user_idx").on(t.userId),
   index("security_event_type_idx").on(t.type),
@@ -139,28 +137,28 @@ export const securityEvent = sqliteTable("security_event", {
 // ─── WhatsApp App Tables ──────────────────────────────────────────────────────
 
 /** Track trial usage per phone number (one trial per phone) */
-export const trialUsage = sqliteTable("trial_usage", {
+export const trialUsage = pgTable("trial_usage", {
   id: text("id").primaryKey(),
   phoneNumber: text("phoneNumber").notNull().unique(),
   userId: text("userId").references(() => user.id),
-  trialStartedAt: integer("trialStartedAt", { mode: "timestamp" }).notNull(),
-  trialEndsAt: integer("trialEndsAt", { mode: "timestamp" }).notNull(),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  trialStartedAt: timestamp("trialStartedAt", { withTimezone: true, mode: "date" }).notNull(),
+  trialEndsAt: timestamp("trialEndsAt", { withTimezone: true, mode: "date" }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("trial_usage_phone_idx").on(t.phoneNumber),
   index("trial_usage_user_idx").on(t.userId),
 ]);
 
 /** Log of every message sent (single, bulk, scheduled, auto-reply, ai) */
-export const messageLog = sqliteTable("message_log", {
+export const messageLog = pgTable("message_log", {
   id: text("id").primaryKey(),
   userId: text("userId").references(() => user.id),
-  type: text("type", { enum: ["single", "bulk", "scheduled", "auto_reply", "ai", "flow"] }).notNull(),
+  type: text("type").$type<"single" | "bulk" | "scheduled" | "auto_reply" | "ai" | "flow">().notNull(),
   phone: text("phone").notNull(),
   message: text("message").notNull(),
-  status: text("status", { enum: ["sent", "failed"] }).notNull(),
+  status: text("status").$type<"sent" | "failed">().notNull(),
   error: text("error"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("message_log_created_at_idx").on(t.createdAt),
   index("message_log_status_idx").on(t.status),
@@ -168,42 +166,42 @@ export const messageLog = sqliteTable("message_log", {
 ]);
 
 /** Persisted auto-reply rules (survive server restarts) */
-export const autoReplyRule = sqliteTable("auto_reply_rule", {
+export const autoReplyRule = pgTable("auto_reply_rule", {
   id: text("id").primaryKey(),
   userId: text("userId").references(() => user.id),
   keyword: text("keyword").notNull(),
   response: text("response").notNull(),
-  matchType: text("matchType", { enum: ["exact", "contains", "startsWith"] })
+  matchType: text("matchType").$type<"exact" | "contains" | "startsWith">()
     .notNull()
     .default("contains"),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("auto_reply_rule_user_idx").on(t.userId),
 ]);
 
 /** Persisted scheduled messages (survive server restarts) */
-export const scheduledMessage = sqliteTable("scheduled_message", {
+export const scheduledMessage = pgTable("scheduled_message", {
   id: text("id").primaryKey(),
   userId: text("userId").references(() => user.id),
   phone: text("phone").notNull(),
   message: text("message").notNull(),
-  scheduledAt: integer("scheduledAt", { mode: "timestamp" }).notNull(),
-  status: text("status", { enum: ["pending", "sent", "failed"] }).notNull().default("pending"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  scheduledAt: timestamp("scheduledAt", { withTimezone: true, mode: "date" }).notNull(),
+  status: text("status").$type<"pending" | "sent" | "failed">().notNull().default("pending"),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("scheduled_message_user_idx").on(t.userId),
 ]);
 
 /** Message templates (saved server-side, not just localStorage) */
-export const template = sqliteTable("template", {
+export const template = pgTable("template", {
   id: text("id").primaryKey(),
   userId: text("userId").references(() => user.id),
   name: text("name").notNull(),
   content: text("content").notNull(),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("template_user_idx").on(t.userId),
 ]);
@@ -211,66 +209,66 @@ export const template = sqliteTable("template", {
 // ─── AI Assistant Tables ──────────────────────────────────────────────────────
 
 /** Store all messages per contact for AI context */
-export const aiChatHistory = sqliteTable("ai_chat_history", {
+export const aiChatHistory = pgTable("ai_chat_history", {
   id: text("id").primaryKey(),
   userId: text("userId")
     .notNull()
     .references(() => user.id),
   contactPhone: text("contactPhone").notNull(),
   message: text("message").notNull(),
-  sender: text("sender", { enum: ["me", "contact"] }).notNull(),
-  isOutgoing: integer("isOutgoing", { mode: "boolean" }).notNull(),
-  timestamp: integer("timestamp", { mode: "timestamp" }).notNull(),
+  sender: text("sender").$type<"me" | "contact">().notNull(),
+  isOutgoing: boolean("isOutgoing").notNull(),
+  timestamp: timestamp("timestamp", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("ai_chat_history_user_contact_timestamp_idx").on(t.userId, t.contactPhone, t.timestamp),
   index("ai_chat_history_user_contact_idx").on(t.userId, t.contactPhone),
 ]);
 
 /** Cached extracted persona per contact */
-export const aiPersona = sqliteTable("ai_persona", {
+export const aiPersona = pgTable("ai_persona", {
   id: text("id").primaryKey(),
   userId: text("userId")
     .notNull()
     .references(() => user.id),
   contactPhone: text("contactPhone").notNull(),
   persona: text("persona").notNull(),
-  lastUpdated: integer("lastUpdated", { mode: "timestamp" }).notNull(),
+  lastUpdated: timestamp("lastUpdated", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("ai_persona_user_contact_idx").on(t.userId, t.contactPhone),
 ]);
 
 /** Global AI settings per user */
-export const aiSettings = sqliteTable("ai_settings", {
+export const aiSettings = pgTable("ai_settings", {
   id: text("id").primaryKey(),
   userId: text("userId")
     .notNull()
     .references(() => user.id)
     .unique(),
-  aiEnabled: integer("aiEnabled", { mode: "boolean" }).notNull().default(true),
-  primaryProvider: text("primaryProvider", { enum: ["groq", "gemini"] })
+  aiEnabled: boolean("aiEnabled").notNull().default(true),
+  primaryProvider: text("primaryProvider").$type<"groq" | "gemini">()
     .notNull()
     .default("groq"),
-  fallbackProvider: text("fallbackProvider", { enum: ["groq", "gemini"] }),
+  fallbackProvider: text("fallbackProvider").$type<"groq" | "gemini">(),
   groqModel: text("groqModel").notNull().default("llama-3.1-8b-instant"),
   fallbackGroqModel: text("fallbackGroqModel"),
   geminiModel: text("geminiModel").notNull().default("gemini-2.0-flash"),
   botName: text("botName"),
   customInstructions: text("customInstructions"),
   timezone: text("timezone").default("UTC"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }).notNull(),
 });
 
 /** Store user API keys for various providers */
-export const apiKeys = sqliteTable("api_keys", {
+export const apiKeys = pgTable("api_keys", {
   id: text("id").primaryKey(),
   userId: text("userId")
     .notNull()
     .references(() => user.id),
-  provider: text("provider", { enum: ["groq", "gemini"] }).notNull(),
+  provider: text("provider").$type<"groq" | "gemini">().notNull(),
   keyValue: text("keyValue").notNull(),
   name: text("name"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("api_keys_user_provider_idx").on(t.userId, t.provider),
 ]);
@@ -278,7 +276,7 @@ export const apiKeys = sqliteTable("api_keys", {
 // ─── Chatbot Flow Tables ──────────────────────────────────────────────────────
 
 /** Visual chatbot flows created via the drag-and-drop builder */
-export const chatbotFlow = sqliteTable("chatbot_flow", {
+export const chatbotFlow = pgTable("chatbot_flow", {
   id: text("id").primaryKey(),
   userId: text("userId")
     .notNull()
@@ -287,29 +285,29 @@ export const chatbotFlow = sqliteTable("chatbot_flow", {
   description: text("description"),
   /** JSON-encoded flow definition: { nodes: Node[], edges: Edge[] } */
   flowData: text("flowData").notNull(),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  enabled: boolean("enabled").notNull().default(true),
   priority: integer("priority").notNull().default(0),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("chatbot_flow_user_idx").on(t.userId),
   index("chatbot_flow_user_enabled_idx").on(t.userId, t.enabled),
 ]);
 
 /** Track API call counts for rate limit fallback */
-export const aiApiUsage = sqliteTable("ai_api_usage", {
+export const aiApiUsage = pgTable("ai_api_usage", {
   id: text("id").primaryKey(),
   userId: text("userId")
     .notNull()
     .references(() => user.id),
-  provider: text("provider", { enum: ["groq", "gemini"] }).notNull(),
+  provider: text("provider").$type<"groq" | "gemini">().notNull(),
   model: text("model").notNull(),
   callCount: integer("callCount").notNull().default(0),
   // Dynamic limits from headers
   estimatedLimit: integer("estimatedLimit"), 
   estimatedRemaining: integer("estimatedRemaining"),
-  resetAt: integer("resetAt", { mode: "timestamp" }).notNull(),
-  timestamp: integer("timestamp", { mode: "timestamp" }).notNull(),
+  resetAt: timestamp("resetAt", { withTimezone: true, mode: "date" }).notNull(),
+  timestamp: timestamp("timestamp", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("ai_api_usage_user_provider_reset_idx").on(t.userId, t.provider, t.resetAt),
 ]);

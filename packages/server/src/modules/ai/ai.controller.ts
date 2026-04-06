@@ -196,7 +196,7 @@ export async function updateSettings(c: Context) {
         if (customInstructions !== undefined) updateData.customInstructions = customInstructions;
         if (normalizedTimezone !== undefined) updateData.timezone = normalizedTimezone;
 
-        await db.update(aiSettings).set(updateData).where(eq(aiSettings.userId, userId)).run();
+        await db.update(aiSettings).set(updateData).where(eq(aiSettings.userId, userId));
 
         // Fetch updated record
         const result = await db
@@ -533,7 +533,7 @@ export async function removeGroqApiKey(c: Context) {
         throw new ProviderError("API key not found or unauthorized", 404);
       }
 
-      await db.delete(apiKeys).where(eq(apiKeys.id, keyId)).run();
+      await db.delete(apiKeys).where(eq(apiKeys.id, keyId));
 
       logger.info("Groq API key removed", { userId, keyId });
 
@@ -647,7 +647,7 @@ export async function removeGeminiApiKey(c: Context) {
         throw new ProviderError("API key not found or unauthorized", 404);
       }
 
-      await db.delete(apiKeys).where(eq(apiKeys.id, keyId)).run();
+      await db.delete(apiKeys).where(eq(apiKeys.id, keyId));
 
       logger.info("Gemini API key removed", { userId, keyId });
 
@@ -678,12 +678,12 @@ export async function getContacts(c: Context) {
         .select({
           contactPhone: aiChatHistory.contactPhone,
           count: sql<number>`count(*)`,
-          lastTs: sql<number>`max(${aiChatHistory.timestamp})`,
+          lastTs: sql<Date | null>`max(${aiChatHistory.timestamp})`,
         })
         .from(aiChatHistory)
         .where(eq(aiChatHistory.userId, userId))
         .groupBy(aiChatHistory.contactPhone)
-        .orderBy(desc(sql<number>`max(${aiChatHistory.timestamp})`))
+        .orderBy(desc(sql<Date>`max(${aiChatHistory.timestamp})`))
         .limit(20);
 
       const validMsgStats = msgStats.filter(
@@ -706,10 +706,7 @@ export async function getContacts(c: Context) {
       const personaMap = new Map(personaRows.map((p) => [p.contactPhone, p.lastUpdated]));
 
       const contacts = validMsgStats.map((stat) => {
-        // lastTs is raw SQLite integer (Unix seconds for mode: "timestamp")
-        const lastMessageDate = stat.lastTs
-          ? new Date(Number(stat.lastTs) * 1000).toISOString()
-          : undefined;
+        const lastMessageDate = stat.lastTs ? new Date(stat.lastTs).toISOString() : undefined;
         const personaDate = personaMap.get(stat.contactPhone);
         const contactName = getContactName(userId, stat.contactPhone);
 

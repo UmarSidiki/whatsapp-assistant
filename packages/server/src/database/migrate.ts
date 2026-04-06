@@ -1,20 +1,24 @@
 /**
- * Standalone migration runner — runs all pending migrations against app.db
- * Usage: npm run db:migrate
+ * Standalone migration runner — runs all pending migrations against PostgreSQL
+ * Usage: bun run db:migrate
  */
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 
-const DB_PATH = process.env.DB_PATH ?? "./app.db";
-const MIGRATIONS_FOLDER = "./src/database/migrations";
+const DATABASE_URL = process.env.DATABASE_URL;
+const MIGRATIONS_FOLDER = "./src/database/pg-migrations";
 
-console.log(`🗄  Running migrations on: ${DB_PATH}`);
+if (!DATABASE_URL) {
+	throw new Error("DATABASE_URL is required to run migrations");
+}
 
-const sqlite = new Database(DB_PATH);
-const db = drizzle(sqlite);
+console.log("Running PostgreSQL migrations");
 
-migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+const client = postgres(DATABASE_URL, { max: 1, prepare: false });
+const db = drizzle(client);
 
-console.log("✅ Migrations applied successfully");
-sqlite.close();
+await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+
+console.log("Migrations applied successfully");
+await client.end();

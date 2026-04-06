@@ -43,7 +43,7 @@ async function cleanupOldEntries(): Promise<void> {
     await db
       .delete(aiApiUsage)
       .where(lt(aiApiUsage.resetAt, now))
-      .run();
+      ;
     logger.debug("API usage cleanup completed");
   } catch (error) {
     logger.error("API usage cleanup failed", { error: String(error) });
@@ -143,7 +143,7 @@ export async function isProviderAvailable(
     await db
       .delete(aiApiUsage)
       .where(and(eq(aiApiUsage.userId, userId), lt(aiApiUsage.resetAt, now)))
-      .run();
+      ;
 
     // Count calls and get the most recently seen API limit
     const result = await db
@@ -339,7 +339,7 @@ export async function resetUsageCounters(userId: string): Promise<void> {
 
   try {
     // Delete all entries for this user
-    await db.delete(aiApiUsage).where(eq(aiApiUsage.userId, userId)).run();
+    await db.delete(aiApiUsage).where(eq(aiApiUsage.userId, userId));
     logger.info("Usage counters reset", { userId });
   } catch (error) {
     logger.error("Failed to reset usage counters", {

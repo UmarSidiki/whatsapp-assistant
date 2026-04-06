@@ -1,10 +1,13 @@
 import { defineConfig } from "drizzle-kit";
+import { config } from "dotenv";
+
+config({ path: "../../.env" });
 
 export default defineConfig({
-  dialect: "sqlite",
+  dialect: "postgresql",
   schema: "./src/database/schema.ts",
-  out: "./src/database/migrations",
+  out: "./src/database/pg-migrations",
   dbCredentials: {
-    url: "./app.db",
+    url: process.env.DATABASE_URL ?? "",
   },
 });

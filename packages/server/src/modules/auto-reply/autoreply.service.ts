@@ -18,10 +18,13 @@ export interface AutoReplyRule {
 // ─── Auto-reply ───────────────────────────────────────────────────────────────
 
 /** Get all auto-reply rules for a user from the database. */
-export async function getAutoReplyRules(userId: string): Promise<AutoReplyRule[]> {
-  return db.select().from(autoReplyRule)
-    .where(eq(autoReplyRule.userId, userId))
-    .all() as unknown as AutoReplyRule[];
+export async function getAutoReplyRules(
+  userId: string,
+): Promise<AutoReplyRule[]> {
+  return db
+    .select()
+    .from(autoReplyRule)
+    .where(eq(autoReplyRule.userId, userId)) as unknown as AutoReplyRule[];
 }
 
 /** Add a new auto-reply rule and persist it. */
@@ -29,7 +32,7 @@ export async function addAutoReplyRule(
   userId: string,
   keyword: string,
   response: string,
-  matchType: AutoReplyRule["matchType"] = "contains"
+  matchType: AutoReplyRule["matchType"] = "contains",
 ): Promise<AutoReplyRule> {
   const now = new Date();
   const rule: AutoReplyRule = {
@@ -39,7 +42,9 @@ export async function addAutoReplyRule(
     matchType,
     enabled: true,
   };
-  await db.insert(autoReplyRule).values({ ...rule, userId, createdAt: now, updatedAt: now });
+  await db
+    .insert(autoReplyRule)
+    .values({ ...rule, userId, createdAt: now, updatedAt: now });
   return rule;
 }
 
@@ -47,20 +52,28 @@ export async function addAutoReplyRule(
 export async function updateAutoReplyRule(
   userId: string,
   id: string,
-  data: Partial<AutoReplyRule>
+  data: Partial<AutoReplyRule>,
 ): Promise<AutoReplyRule> {
-  const [existing] = await db.select().from(autoReplyRule)
+  const [existing] = await db
+    .select()
+    .from(autoReplyRule)
     .where(and(eq(autoReplyRule.id, id), eq(autoReplyRule.userId, userId)));
   if (!existing) throw new ServiceError("Auto-reply rule not found", 404);
-  await db.update(autoReplyRule)
+  await db
+    .update(autoReplyRule)
     .set({ ...data, updatedAt: new Date() })
     .where(eq(autoReplyRule.id, id));
   return { ...existing, ...data } as AutoReplyRule;
 }
 
 /** Delete a rule. Throws 404 if not found. */
-export async function deleteAutoReplyRule(userId: string, id: string): Promise<void> {
-  const [existing] = await db.select().from(autoReplyRule)
+export async function deleteAutoReplyRule(
+  userId: string,
+  id: string,
+): Promise<void> {
+  const [existing] = await db
+    .select()
+    .from(autoReplyRule)
     .where(and(eq(autoReplyRule.id, id), eq(autoReplyRule.userId, userId)));
   if (!existing) throw new ServiceError("Auto-reply rule not found", 404);
   await db.delete(autoReplyRule).where(eq(autoReplyRule.id, id));
@@ -73,7 +86,11 @@ export async function deleteAutoReplyRule(userId: string, id: string): Promise<v
  * Sends a reply (segmented) if the message matches the first enabled rule.
  * Returns true if a rule matched and a reply was sent, false otherwise.
  */
-export async function handleAutoReply(userId: string, jid: string, text: string): Promise<boolean> {
+export async function handleAutoReply(
+  userId: string,
+  jid: string,
+  text: string,
+): Promise<boolean> {
   const rules = await getAutoReplyRules(userId);
   const t = text.toLowerCase();
 
@@ -90,8 +107,13 @@ export async function handleAutoReply(userId: string, jid: string, text: string)
         await sendSegmented(userId, jid, rule.response);
         const phone = jidToContactId(jid);
         await db.insert(messageLog).values({
-          id: crypto.randomUUID(), userId, type: "auto_reply", phone,
-          message: rule.response, status: "sent", createdAt: new Date(),
+          id: crypto.randomUUID(),
+          userId,
+          type: "auto_reply",
+          phone,
+          message: rule.response,
+          status: "sent",
+          createdAt: new Date(),
         });
         logger.info("Auto-reply sent", { userId, jid, keyword: rule.keyword });
       } catch (e) {

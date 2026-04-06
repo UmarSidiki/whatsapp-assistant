@@ -11,3 +11,9 @@ To run (root scripts will proxy to each package):
 ```bash
 npm run dev
 ```
+
+To run with Bun scripts:
+
+```bash
+bun run dev:bun
+```

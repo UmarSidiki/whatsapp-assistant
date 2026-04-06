@@ -24,8 +24,7 @@ const timers = new Map<string, ReturnType<typeof setTimeout>>();
 /** Return all scheduled messages for a user from DB. */
 export async function getScheduledMessages(userId: string): Promise<ScheduledMessage[]> {
   const rows = await db.select().from(scheduledMessage)
-    .where(eq(scheduledMessage.userId, userId))
-    .all();
+    .where(eq(scheduledMessage.userId, userId));
   return rows.map(r => ({
     id: r.id,
     phone: r.phone,
@@ -71,8 +70,7 @@ export async function cancelScheduledMessage(userId: string, id: string): Promis
 /** Re-arm timers for pending messages of a specific user. */
 export async function restoreScheduledMessagesForUser(userId: string): Promise<void> {
   const rows = await db.select().from(scheduledMessage)
-    .where(and(eq(scheduledMessage.status, "pending"), eq(scheduledMessage.userId, userId)))
-    .all();
+    .where(and(eq(scheduledMessage.status, "pending"), eq(scheduledMessage.userId, userId)));
   for (const row of rows) {
     const msg: ScheduledMessage = {
       id: row.id,
@@ -91,8 +89,7 @@ export async function restoreScheduledMessagesForUser(userId: string): Promise<v
 /** Re-arm timers for all pending messages (call once on server startup). */
 export async function restoreScheduledMessages(): Promise<void> {
   const rows = await db.select().from(scheduledMessage)
-    .where(eq(scheduledMessage.status, "pending"))
-    .all();
+    .where(eq(scheduledMessage.status, "pending"));
   for (const row of rows) {
     const msg: ScheduledMessage = {
       id: row.id,

@@ -17,7 +17,7 @@ export interface Stats {
 }
 
 const STATS_CACHE_TTL_MS = 5_000;
-const DAY_SECONDS = 24 * 60 * 60;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const statsCache = new Map<string, { value: Stats; expiresAt: number }>();
 
 /** Return dashboard statistics for a specific user. */
@@ -29,19 +29,19 @@ export async function getStats(userId: string): Promise<Stats> {
   }
 
   const now = new Date();
-  const startOfTodayUnix = Math.floor(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 1000
-  );
-  const sevenDaysAgoUnix = startOfTodayUnix - (6 * DAY_SECONDS);
-  const dateExpr = sql<string>`date(${messageLog.createdAt}, 'unixepoch')`;
+  const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const sevenDaysAgo = new Date(startOfToday.getTime() - (6 * DAY_MS));
+  const startOfTodayIso = startOfToday.toISOString();
+  const sevenDaysAgoIso = sevenDaysAgo.toISOString();
+  const dateExpr = sql<string>`to_char(${messageLog.createdAt} at time zone 'UTC', 'YYYY-MM-DD')`;
 
   const [totals, recentDaily, pendingResult, rulesResult, templateResult] = await Promise.all([
     db
       .select({
         totalSent: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'sent' THEN 1 ELSE 0 END), 0)`,
         totalFailed: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'failed' THEN 1 ELSE 0 END), 0)`,
-        sentToday: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'sent' AND ${messageLog.createdAt} >= ${startOfTodayUnix} THEN 1 ELSE 0 END), 0)`,
-        failedToday: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'failed' AND ${messageLog.createdAt} >= ${startOfTodayUnix} THEN 1 ELSE 0 END), 0)`,
+        sentToday: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'sent' AND ${messageLog.createdAt} >= ${startOfTodayIso} THEN 1 ELSE 0 END), 0)`,
+        failedToday: sql<number>`COALESCE(SUM(CASE WHEN ${messageLog.status} = 'failed' AND ${messageLog.createdAt} >= ${startOfTodayIso} THEN 1 ELSE 0 END), 0)`,
       })
       .from(messageLog)
       .where(eq(messageLog.userId, userId))
@@ -55,7 +55,7 @@ export async function getStats(userId: string): Promise<Stats> {
       .from(messageLog)
       .where(and(
         eq(messageLog.userId, userId),
-        sql`${messageLog.createdAt} >= ${sevenDaysAgoUnix}`,
+        sql`${messageLog.createdAt} >= ${sevenDaysAgoIso}`,
       ))
       .groupBy(dateExpr)
       .orderBy(dateExpr),
@@ -78,7 +78,7 @@ export async function getStats(userId: string): Promise<Stats> {
 
   const dayMap = new Map<string, { sent: number; failed: number }>();
   for (let i = 6; i >= 0; i--) {
-    const d = new Date((startOfTodayUnix - (i * DAY_SECONDS)) * 1000);
+    const d = new Date(startOfToday.getTime() - (i * DAY_MS));
     const key = d.toISOString().slice(0, 10);
     dayMap.set(key, { sent: 0, failed: 0 });
   }

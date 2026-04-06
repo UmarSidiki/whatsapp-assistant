@@ -1,11 +1,32 @@
-To install dependencies:
+Install dependencies from repository root:
+
 ```sh
 npm install
 ```
 
-To run in development:
+Required environment variables:
+
+```sh
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/whatsapp_bot
+PORT=3000
+BETTER_AUTH_SECRET=change-me
+BETTER_AUTH_URL=http://localhost:3000
+```
+
+Run migrations (after generating or with `db:push`):
+
+```sh
+npm run db:push
+```
+
+Run Bun-native development server:
+
 ```sh
 npm run dev
 ```
 
-(open server will start on the port configured in code, e.g. http://localhost:3000)
+Start server:
+
+```sh
+npm run start
+```

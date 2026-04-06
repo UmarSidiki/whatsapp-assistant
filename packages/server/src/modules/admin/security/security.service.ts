@@ -45,7 +45,7 @@ export async function revokeSessionById(sessionId: string) {
     return null;
   }
 
-  await db.delete(session).where(eq(session.id, sessionId)).run();
+  await db.delete(session).where(eq(session.id, sessionId));
   return existing;
 }
 
