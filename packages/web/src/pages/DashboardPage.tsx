@@ -1,29 +1,23 @@
 import { Suspense, lazy, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard,
-  Wifi,
-  Send,
   CalendarClock,
-  MessageSquareReply,
+  ChevronRight,
   FileText,
-  Menu,
+  LayoutDashboard,
   LogOut,
-  Zap,
+  Menu,
+  MessageSquareReply,
+  Send,
   Workflow,
+  Zap,
+  Wifi,
+  X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
 import { signOut, useSession } from "@/lib/auth-client";
 import { useApiUrl } from "@/hooks/useApi";
+import { cn } from "@/lib/utils";
 
 const OverviewPage = lazy(() => import("./dashboard/OverviewPage"));
 const ConnectionTab = lazy(() =>
@@ -48,25 +42,34 @@ const FlowBuilderTab = lazy(() =>
   import("./dashboard/FlowBuilderTab").then((mod) => ({ default: mod.FlowBuilderTab }))
 );
 
-type Page = "overview" | "connection" | "bulk" | "schedule" | "auto-reply" | "flow-builder" | "templates" | "ai-assistant";
+type Page =
+  | "overview"
+  | "connection"
+  | "bulk"
+  | "schedule"
+  | "auto-reply"
+  | "flow-builder"
+  | "templates"
+  | "ai-assistant";
+
 type TabProps = { apiUrl: string };
 
-const NAV_ITEMS: { id: Page; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "connection", label: "Connection", icon: Wifi },
-  { id: "bulk", label: "Bulk Messages", icon: Send },
-  { id: "schedule", label: "Schedule", icon: CalendarClock },
-  { id: "auto-reply", label: "Auto Reply", icon: MessageSquareReply },
-  { id: "flow-builder", label: "Flow Builder", icon: Workflow },
-  { id: "templates", label: "Templates", icon: FileText },
-  { id: "ai-assistant", label: "AI Assistant", icon: Zap },
+const NAV_ITEMS: { id: Page; label: string; icon: React.ComponentType<{ className?: string }>; desc: string }[] = [
+  { id: "overview", label: "Overview", icon: LayoutDashboard, desc: "Dashboard stats" },
+  { id: "connection", label: "Connection", icon: Wifi, desc: "WhatsApp link" },
+  { id: "bulk", label: "Bulk Messages", icon: Send, desc: "Send to many" },
+  { id: "schedule", label: "Scheduled", icon: CalendarClock, desc: "Timed messages" },
+  { id: "auto-reply", label: "Auto Reply", icon: MessageSquareReply, desc: "Auto responses" },
+  { id: "flow-builder", label: "Flows", icon: Workflow, desc: "Automation flows" },
+  { id: "templates", label: "Templates", icon: FileText, desc: "Message templates" },
+  { id: "ai-assistant", label: "AI Assistant", icon: Zap, desc: "AI powered replies" },
 ];
 
 const PAGE_TITLES: Record<Page, string> = {
   overview: "Overview",
   connection: "Connection",
   bulk: "Bulk Messages",
-  schedule: "Schedule",
+  schedule: "Scheduled Messages",
   "auto-reply": "Auto Reply",
   "flow-builder": "Flow Builder",
   templates: "Templates",
@@ -97,111 +100,201 @@ export default function DashboardPage() {
     navigate("/");
   };
 
+  const handleSelect = (id: Page) => {
+    setActivePage(id);
+    setMobileNavOpen(false);
+  };
+
   const user = session?.user;
   const initials = user?.name
-    ? user.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
+    ? user.name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
     : "U";
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div className="flex h-svh flex-col overflow-hidden bg-background">
       {/* Header */}
-      <header className="border-b bg-card px-4 py-3 md:px-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold">WhatsApp Bot</h1>
-          <div className="flex items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon">
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback>{initials}</AvatarFallback>
-                  </Avatar>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72">
-                <DropdownMenuLabel>Account</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleSignOut}>
-                  <LogOut className="mr-2 size-4" />
-                  Sign Out
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                  Note: Signing out keeps your WhatsApp bot running. Use the Disconnect button on the Connection tab to stop the bot.
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              onClick={() => setMobileNavOpen(!mobileNavOpen)}
-            >
-              <Menu className="size-5" />
-            </Button>
+      <header className="wa-header flex h-[56px] shrink-0 items-center justify-between px-4">
+        <div className="flex items-center gap-3">
+          {/* Mobile menu */}
+          <button
+            onClick={() => setMobileNavOpen(true)}
+            className="flex size-10 items-center justify-center rounded-full text-white/90 hover:bg-white/10 md:hidden"
+            aria-label="Open menu"
+          >
+            <Menu className="size-5" />
+          </button>
+          
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-white/15">
+              <svg viewBox="0 0 24 24" className="size-5 fill-current text-white">
+                <path d="M12 2C6.48 2 2 6.48 2 12c0 1.77.46 3.43 1.27 4.88L2 22l5.12-1.27C8.57 21.54 10.23 22 12 22c5.52 0 10-4.48 10-10S17.52 2 12 2zm.01 18c-1.61 0-3.09-.46-4.36-1.24l-.31-.19-3.03.75.76-2.94-.2-.32A7.963 7.963 0 014 12c0-4.42 3.58-8 8.01-8 4.42 0 8 3.58 8 8s-3.59 8-8 8z"/>
+              </svg>
+            </div>
+            <span className="hidden text-[15px] font-semibold text-white sm:block">WhatsApp Bot</span>
           </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSignOut}
+            className="flex h-9 items-center gap-2 rounded-full bg-white/10 px-4 text-sm font-medium text-white/90 transition-colors hover:bg-white/20"
+          >
+            <LogOut className="size-4" />
+            <span className="hidden sm:inline">Sign out</span>
+          </button>
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar Navigation - Desktop */}
-        <nav className="hidden w-56 flex-col border-r bg-card md:flex">
-          <div className="space-y-2 p-4">
-            {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-              <Button
-                key={id}
-                variant={activePage === id ? "default" : "ghost"}
-                className="w-full justify-start gap-2"
-                onClick={() => {
-                  setActivePage(id);
-                  setMobileNavOpen(false);
-                }}
+      {/* Mobile nav overlay */}
+      {mobileNavOpen && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/40 md:hidden"
+          onClick={() => setMobileNavOpen(false)}
+        >
+          <nav 
+            className="wa-scrollbar h-full w-72 overflow-y-auto bg-white dark:bg-[#111b21]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex h-14 items-center justify-between border-b px-4 dark:border-[#233138]">
+              <span className="text-sm font-semibold text-foreground">Menu</span>
+              <button
+                onClick={() => setMobileNavOpen(false)}
+                className="wa-icon-btn"
+                aria-label="Close menu"
               >
-                <Icon className="size-4" />
-                <span>{label}</span>
-              </Button>
-            ))}
-          </div>
-        </nav>
+                <X className="size-5" />
+              </button>
+            </div>
+            
+            {/* User info */}
+            <div className="border-b p-4 dark:border-[#233138]">
+              <div className="flex items-center gap-3">
+                <Avatar className="size-12">
+                  <AvatarFallback className="bg-primary text-primary-foreground text-sm">
+                    {initials}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-foreground">{user?.name ?? "User"}</p>
+                  <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
+                </div>
+              </div>
+            </div>
 
-        {/* Mobile Navigation */}
-        {mobileNavOpen && (
-          <nav className="absolute top-16 left-0 right-0 z-40 border-b bg-card p-2 md:hidden">
-            <div className="space-y-1">
-              {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-                <Button
-                  key={id}
-                  variant={activePage === id ? "default" : "ghost"}
-                  className="w-full justify-start gap-2"
-                  onClick={() => {
-                    setActivePage(id);
-                    setMobileNavOpen(false);
-                  }}
-                >
-                  <Icon className="size-4" />
-                  <span>{label}</span>
-                </Button>
-              ))}
+            {/* Nav items */}
+            <div className="py-2">
+              {NAV_ITEMS.map(({ id, label, icon: Icon, desc }) => {
+                const active = activePage === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => handleSelect(id)}
+                    className={cn(
+                      "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
+                      active
+                        ? "bg-primary/10"
+                        : "hover:bg-muted"
+                    )}
+                  >
+                    <Icon className={cn("size-5 shrink-0", active ? "text-primary" : "text-muted-foreground")} />
+                    <div className="min-w-0 flex-1">
+                      <span className={cn("block text-sm", active ? "font-medium text-foreground" : "text-foreground")}>
+                        {label}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">{desc}</span>
+                    </div>
+                    {active && <ChevronRight className="size-4 text-primary" />}
+                  </button>
+                );
+              })}
             </div>
           </nav>
-        )}
+        </div>
+      )}
 
-        {/* Content Area */}
-        <main className="flex-1 overflow-auto">
-          <div className="space-y-6 p-4 md:p-6">
-            <div>
-              <h2 className="text-2xl font-bold">{PAGE_TITLES[activePage]}</h2>
+      {/* Main layout */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Desktop sidebar */}
+        <aside className="wa-sidebar hidden w-64 shrink-0 flex-col border-r md:flex lg:w-72">
+          {/* User section */}
+          <div className="flex items-center gap-3 border-b p-4 dark:border-[#233138]">
+            <Avatar className="size-11">
+              <AvatarFallback className="bg-primary text-primary-foreground text-sm font-semibold">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-foreground">{user?.name ?? "User"}</p>
+              <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
             </div>
-            <Suspense
-              fallback={(
-                <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  Loading {PAGE_TITLES[activePage]}...
-                </div>
-              )}
-            >
-              <ActivePage apiUrl={apiUrl} />
-            </Suspense>
+          </div>
+
+          {/* Navigation */}
+          <nav className="wa-scrollbar flex-1 overflow-y-auto py-2">
+            {NAV_ITEMS.map(({ id, label, icon: Icon, desc }) => {
+              const active = activePage === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => handleSelect(id)}
+                  className={cn(
+                    "group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
+                    active
+                      ? "bg-primary/10 border-r-2 border-primary"
+                      : "hover:bg-muted"
+                  )}
+                >
+                  <div className={cn(
+                    "flex size-10 shrink-0 items-center justify-center rounded-xl transition-colors",
+                    active ? "bg-primary text-white" : "bg-muted text-muted-foreground group-hover:text-foreground"
+                  )}>
+                    <Icon className="size-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className={cn(
+                      "block text-sm leading-tight",
+                      active ? "font-semibold text-foreground" : "text-foreground"
+                    )}>
+                      {label}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">{desc}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Footer hint */}
+          <div className="border-t p-3 dark:border-[#233138]">
+            <p className="text-center text-xs text-muted-foreground">
+              Signing out won't stop the bot
+            </p>
+          </div>
+        </aside>
+
+        {/* Main content */}
+        <main className="wa-doodle-bg relative flex-1 overflow-hidden">
+          {/* Scrollable content */}
+          <div className="wa-scrollbar relative z-10 h-full overflow-y-auto">
+            <div className="mx-auto max-w-6xl p-5 lg:p-8">
+              <Suspense
+                fallback={
+                  <div className="wa-card wa-animate-in flex items-center gap-3 p-5">
+                    <div className="size-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    <span className="text-sm text-muted-foreground">
+                      Loading {PAGE_TITLES[activePage]}...
+                    </span>
+                  </div>
+                }
+              >
+                <ActivePage apiUrl={apiUrl} />
+              </Suspense>
+            </div>
           </div>
         </main>
       </div>

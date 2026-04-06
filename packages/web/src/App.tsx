@@ -1,9 +1,11 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { ProtectedRoute } from "@/components/ProtectedRoute";
-import { useSession } from "@/lib/auth-client";
-import LoginPage from "@/pages/LoginPage";
-import SignupPage from "@/pages/SignupPage";
-import DashboardPage from "@/pages/DashboardPage";
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { ADMIN_ROLES, useSession } from '@/lib/auth-client';
+import DashboardPage from '@/pages/DashboardPage';
+import LandingPage from '@/pages/LandingPage';
+import AdminPage from '@/pages/admin/AdminPage';
+import LoginPage from '@/pages/LoginPage';
+import SignupPage from '@/pages/SignupPage';
 
 function AppContent() {
   const { data: session, isPending } = useSession();
@@ -18,16 +20,26 @@ function AppContent() {
 
   return (
     <Routes>
-      <Route
-        path="/"
-        element={session ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-      />
+      <Route path="/" element={session ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
+      <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route
         path="/dashboard"
         element={
           <ProtectedRoute>
             <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute
+            allowedRoles={ADMIN_ROLES}
+            unauthenticatedRedirectTo="/login"
+            unauthorizedRedirectTo="/dashboard"
+          >
+            <AdminPage />
           </ProtectedRoute>
         }
       />

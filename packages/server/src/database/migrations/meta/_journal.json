@@ -50,6 +50,41 @@
       "when": 1773327422227,
       "tag": "0006_tough_silverclaw",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1775406632132,
+      "tag": "0007_common_anthem",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1775412886806,
+      "tag": "0008_known_stryfe",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1775412987506,
+      "tag": "0009_wise_pine",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1775415059907,
+      "tag": "0010_previous_lester",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1775421043452,
+      "tag": "0011_admin_only_role",
+      "breakpoints": true
     }
   ]
 }

@@ -32,6 +32,7 @@ const STATUS_VARIANTS: Record<WAStatus, "default" | "secondary" | "destructive" 
 export function ConnectionTab({ apiUrl }: { apiUrl: string }) {
   const [status, setStatus] = useState<WAStatus>("idle");
   const [qr, setQr] = useState<string | undefined>();
+  const [connectionError, setConnectionError] = useState<string | undefined>();
   const [connecting, setConnecting] = useState(false);
   const [quickPhone, setQuickPhone] = useState("");
   const [quickMessage, setQuickMessage] = useState("");
@@ -48,13 +49,14 @@ export function ConnectionTab({ apiUrl }: { apiUrl: string }) {
     stopPolling();
     pollRef.current = setInterval(async () => {
       try {
-        const data = await fetchJson<{ status: WAStatus; qr?: string }>(
+        const data = await fetchJson<{ status: WAStatus; qr?: string; lastError?: string }>(
           `${url}/api/whatsapp/status`, 
           { credentials: "include" }
         );
         pollFailuresRef.current = 0;
         setStatus(data.status);
         setQr(data.qr);
+        setConnectionError(data.lastError);
         if (data.status === "connected" || data.status === "idle" || data.status === "disconnected") {
           stopPolling();
         }
@@ -70,12 +72,13 @@ export function ConnectionTab({ apiUrl }: { apiUrl: string }) {
   useEffect(() => {
     const syncStatus = async () => {
       try {
-        const data = await fetchJson<{ status: WAStatus; qr?: string }>(
+        const data = await fetchJson<{ status: WAStatus; qr?: string; lastError?: string }>(
           `${apiUrl}/api/whatsapp/status`, 
           { credentials: "include" }
         );
         setStatus(data.status);
         setQr(data.qr);
+        setConnectionError(data.lastError);
         if (data.status === "waiting_qr") {
           startPolling(apiUrl);
         }
@@ -94,9 +97,11 @@ export function ConnectionTab({ apiUrl }: { apiUrl: string }) {
       const res = await fetch(`${apiUrl}/api/whatsapp/init`, { method: "POST", credentials: "include" });
       if (!res.ok) {
         setStatus("disconnected");
+        setConnectionError("Failed to initialize WhatsApp connection.");
         return;
       }
       setStatus("waiting_qr");
+      setConnectionError(undefined);
       startPolling(apiUrl);
     } finally {
       setConnecting(false);
@@ -108,6 +113,7 @@ export function ConnectionTab({ apiUrl }: { apiUrl: string }) {
     await fetch(`${apiUrl}/api/whatsapp/disconnect`, { method: "POST", credentials: "include" });
     setStatus("disconnected");
     setQr(undefined);
+    setConnectionError(undefined);
   };
 
   const handleQuickSend = async () => {
@@ -160,6 +166,9 @@ export function ConnectionTab({ apiUrl }: { apiUrl: string }) {
               </svg>
               WhatsApp Connected
             </div>
+          )}
+          {status === "disconnected" && connectionError && (
+            <p className="max-w-sm text-center text-sm text-destructive">{connectionError}</p>
           )}
           <div className="flex gap-2">
             {(status === "idle" || status === "disconnected") && (

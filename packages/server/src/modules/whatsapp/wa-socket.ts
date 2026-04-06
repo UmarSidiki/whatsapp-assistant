@@ -20,6 +20,8 @@ export interface WAState {
   socket: WASocket | null;
   status: WAStatus;
   qr: string | undefined;
+  lastError?: string;
+  lastErrorAt?: string;
 }
 
 /** Business-logic error that carries an HTTP status code. */
@@ -39,7 +41,7 @@ const sessions = new Map<string, WAState>();
 const contactNamesByUser = new Map<string, Map<string, string>>();
 
 function defaultState(): WAState {
-  return { socket: null, status: "idle", qr: undefined };
+  return { socket: null, status: "idle", qr: undefined, lastError: undefined, lastErrorAt: undefined };
 }
 
 /** Get the session for a user, creating a default idle session if none exists. */

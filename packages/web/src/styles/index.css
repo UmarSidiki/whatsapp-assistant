@@ -43,73 +43,381 @@
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
+    --color-wa-teal: var(--wa-teal);
+    --color-wa-teal-dark: var(--wa-teal-dark);
+    --color-wa-green: var(--wa-green);
+    --color-wa-light-green: var(--wa-light-green);
 }
 
 :root {
     --radius: 0.625rem;
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.646 0.222 41.116);
-    --chart-2: oklch(0.6 0.118 184.704);
-    --chart-3: oklch(0.398 0.07 227.392);
-    --chart-4: oklch(0.828 0.189 84.429);
-    --chart-5: oklch(0.769 0.188 70.08);
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    
+    /* WhatsApp authentic colors - refined */
+    --wa-teal: #00a884;
+    --wa-teal-dark: #008069;
+    --wa-green: #25d366;
+    --wa-light-green: #dcf8c6;
+    --wa-panel-bg: #f0f2f5;
+    --wa-chat-bg: #efeae2;
+    --wa-sidebar-bg: #ffffff;
+    --wa-header-bg: #008069;
+    --wa-border: #e9edef;
+    --wa-text-primary: #111b21;
+    --wa-text-secondary: #54656f;
+    --wa-text-muted: #8696a0;
+    
+    --background: #f0f2f5;
+    --foreground: #111b21;
+    --card: #ffffff;
+    --card-foreground: #111b21;
+    --popover: #ffffff;
+    --popover-foreground: #111b21;
+    --primary: #00a884;
+    --primary-foreground: #ffffff;
+    --secondary: #f0f2f5;
+    --secondary-foreground: #3b4a54;
+    --muted: #f0f2f5;
+    --muted-foreground: #667781;
+    --accent: #dcf8c6;
+    --accent-foreground: #111b21;
+    --destructive: #e53935;
+    --border: #e9edef;
+    --input: #f0f2f5;
+    --ring: #00a884;
+    --chart-1: #00a884;
+    --chart-2: #e53935;
+    --chart-3: #53bdeb;
+    --chart-4: #ff9800;
+    --chart-5: #8696a0;
+    --sidebar: #ffffff;
+    --sidebar-foreground: #111b21;
+    --sidebar-primary: #00a884;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #f0f2f5;
+    --sidebar-accent-foreground: #111b21;
+    --sidebar-border: #e9edef;
+    --sidebar-ring: #00a884;
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.488 0.243 264.376);
-    --chart-2: oklch(0.696 0.17 162.48);
-    --chart-3: oklch(0.769 0.188 70.08);
-    --chart-4: oklch(0.627 0.265 303.9);
-    --chart-5: oklch(0.645 0.246 16.439);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --wa-panel-bg: #111b21;
+    --wa-chat-bg: #0b141a;
+    --wa-sidebar-bg: #111b21;
+    --wa-header-bg: #1f2c34;
+    --wa-border: #233138;
+    --wa-text-primary: #e9edef;
+    --wa-text-secondary: #aebac1;
+    --wa-text-muted: #8696a0;
+    
+    --background: #0b141a;
+    --foreground: #e9edef;
+    --card: #111b21;
+    --card-foreground: #e9edef;
+    --popover: #1f2c34;
+    --popover-foreground: #e9edef;
+    --primary: #00a884;
+    --primary-foreground: #111b21;
+    --secondary: #1f2c34;
+    --secondary-foreground: #e9edef;
+    --muted: #1f2c34;
+    --muted-foreground: #8696a0;
+    --accent: #025144;
+    --accent-foreground: #e9edef;
+    --destructive: #f15c6d;
+    --border: #233138;
+    --input: #1f2c34;
+    --ring: #00a884;
+    --chart-1: #00a884;
+    --chart-2: #f15c6d;
+    --chart-3: #53bdeb;
+    --chart-4: #ff9800;
+    --chart-5: #8696a0;
+    --sidebar: #111b21;
+    --sidebar-foreground: #e9edef;
+    --sidebar-primary: #00a884;
+    --sidebar-primary-foreground: #111b21;
+    --sidebar-accent: #1f2c34;
+    --sidebar-accent-foreground: #e9edef;
+    --sidebar-border: #233138;
+    --sidebar-ring: #00a884;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+/* Proportional spacing scale (3:4 ratio) */
+:root {
+    --space-xs: 0.25rem;   /* 4px */
+    --space-sm: 0.5rem;    /* 8px */
+    --space-md: 0.75rem;   /* 12px */
+    --space-lg: 1rem;      /* 16px */
+    --space-xl: 1.5rem;    /* 24px */
+    --space-2xl: 2rem;     /* 32px */
+    --space-3xl: 3rem;     /* 48px */
+}
+
+/* WhatsApp doodle background using webp image */
+.wa-doodle-bg {
+    position: relative;
+    background-color: #efeae2;
+}
+
+.wa-doodle-bg::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url('/background.webp');
+    background-size: auto;
+    background-repeat: repeat;
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.dark .wa-doodle-bg {
+    background-color: #0b141a;
+}
+
+.dark .wa-doodle-bg::before {
+    opacity: 0.06;
+    filter: invert(1);
+}
+
+/* WhatsApp header bar */
+.wa-header {
+    background-color: var(--wa-header-bg);
+    color: #ffffff;
+}
+
+/* WhatsApp sidebar panel */
+.wa-sidebar {
+    background-color: var(--wa-sidebar-bg);
+    border-color: var(--wa-border);
+}
+
+/* WhatsApp panel surface */
+.wa-panel {
+    background-color: var(--wa-panel-bg);
+}
+
+/* WhatsApp card - clean, minimal shadow */
+.wa-card {
+    background-color: #ffffff;
+    border-radius: var(--radius);
+    box-shadow: 0 1px 2px rgba(11, 20, 26, 0.08);
+    border: 1px solid transparent;
+    transition: box-shadow 0.15s ease-out, border-color 0.15s ease-out;
+}
+
+.wa-card:hover {
+    box-shadow: 0 2px 8px rgba(11, 20, 26, 0.1);
+}
+
+.dark .wa-card {
+    background-color: #182229;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    border-color: var(--wa-border);
+}
+
+.dark .wa-card:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    border-color: #2f3d46;
+}
+
+/* Elevated card variant */
+.wa-card-elevated {
+    background-color: #ffffff;
+    border-radius: var(--radius);
+    box-shadow: 0 4px 12px rgba(11, 20, 26, 0.1);
+}
+
+.dark .wa-card-elevated {
+    background-color: #182229;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* WhatsApp outgoing message style (green) */
+.wa-card-outgoing {
+    background-color: #dcf8c6;
+}
+
+.dark .wa-card-outgoing {
+    background-color: #025144;
+}
+
+/* Interactive elements */
+.wa-interactive {
+    transition: background-color 0.12s ease-out, transform 0.1s ease-out;
+}
+
+.wa-interactive:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+.wa-interactive:active {
+    transform: scale(0.98);
+}
+
+.dark .wa-interactive:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Icon button - WhatsApp style */
+.wa-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    color: var(--wa-text-secondary);
+    transition: background-color 0.15s ease-out, color 0.15s ease-out;
+}
+
+.wa-icon-btn:hover {
+    background-color: rgba(0, 0, 0, 0.06);
+    color: var(--wa-text-primary);
+}
+
+.wa-icon-btn:active {
+    background-color: rgba(0, 0, 0, 0.1);
+}
+
+.dark .wa-icon-btn {
+    color: var(--wa-text-secondary);
+}
+
+.dark .wa-icon-btn:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--wa-text-primary);
+}
+
+/* WhatsApp-style scrollbar */
+.wa-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.wa-scrollbar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.wa-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.wa-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+
+.wa-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(0, 0, 0, 0.3);
+}
+
+.dark .wa-scrollbar {
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.dark .wa-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+.dark .wa-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.25);
+}
+
+/* Status indicators */
+.wa-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.wa-status-online {
+    background-color: #00a884;
+    box-shadow: 0 0 0 2px rgba(0, 168, 132, 0.2);
+}
+
+.wa-status-offline {
+    background-color: #8696a0;
+}
+
+.wa-status-error {
+    background-color: #e53935;
+    box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.2);
+}
+
+.wa-status-warning {
+    background-color: #ff9800;
+    box-shadow: 0 0 0 2px rgba(255, 152, 0, 0.2);
+}
+
+/* Text hierarchy */
+.wa-text-primary {
+    color: var(--wa-text-primary);
+}
+
+.wa-text-secondary {
+    color: var(--wa-text-secondary);
+}
+
+.wa-text-muted {
+    color: var(--wa-text-muted);
+}
+
+/* Loading skeleton pulse */
+@keyframes wa-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.7; }
+}
+
+.wa-skeleton {
+    background: linear-gradient(90deg, #e9edef 0%, #f5f6f6 50%, #e9edef 100%);
+    background-size: 200% 100%;
+    animation: wa-pulse 1.5s ease-in-out infinite;
+    border-radius: var(--radius);
+}
+
+.dark .wa-skeleton {
+    background: linear-gradient(90deg, #233138 0%, #2a3942 50%, #233138 100%);
+    background-size: 200% 100%;
+}
+
+/* Subtle entrance animation */
+@keyframes wa-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.wa-animate-in {
+    animation: wa-fade-in 0.2s ease-out;
+}
+
+/* Focus ring */
+.wa-focus-ring:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--wa-teal);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+    
+    .wa-interactive,
+    .wa-icon-btn,
+    .wa-card {
+        transition: none;
+    }
+    
+    .wa-animate-in {
+        animation: none;
+    }
+    
+    .wa-skeleton {
+        animation: none;
+        opacity: 0.5;
+    }
 }

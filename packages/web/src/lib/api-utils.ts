@@ -18,29 +18,32 @@ export class ApiResponseError extends Error {
 export async function validateJsonResponse(response: Response): Promise<void> {
   const contentType = response.headers.get('content-type')
   
-  // Check if server returned HTML instead of JSON
-  if (contentType && !contentType.includes('application/json')) {
-    if (contentType.includes('text/html')) {
-      throw new ApiResponseError(
-        'Unable to connect to API server. Please check your connection and try again.',
-        response.status
-      )
-    }
+  // Reject HTML responses (likely error pages or SPA fallback)
+  if (contentType && contentType.includes('text/html')) {
     throw new ApiResponseError(
-      `Server returned ${contentType} instead of JSON`,
+      'Unable to connect to API server. Please check your connection and try again.',
       response.status
     )
   }
   
-  // Check status code
+  // For non-OK responses, try to extract error info
   if (!response.ok) {
-    // Try to parse error message from JSON
     try {
-      const errorData = await response.json()
-      throw new ApiResponseError(
-        errorData.error || errorData.message || `HTTP ${response.status}`,
-        response.status
-      )
+      const text = await response.text()
+      // Try to parse as JSON for error details
+      try {
+        const errorData = JSON.parse(text)
+        throw new ApiResponseError(
+          errorData.error || errorData.message || `HTTP ${response.status}`,
+          response.status
+        )
+      } catch (parseErr) {
+        // Not JSON, use text or status
+        throw new ApiResponseError(
+          text || `HTTP ${response.status}`,
+          response.status
+        )
+      }
     } catch (e) {
       if (e instanceof ApiResponseError) throw e
       throw new ApiResponseError(`HTTP ${response.status}`, response.status)
@@ -59,5 +62,10 @@ export async function fetchJson<T>(
 ): Promise<T> {
   const response = await fetch(url, options)
   await validateJsonResponse(response)
-  return response.json()
+  try {
+    return await response.json()
+  } catch {
+    const contentType = response.headers.get('content-type') || 'unknown content-type'
+    throw new ApiResponseError(`Server returned ${contentType} instead of JSON`, response.status)
+  }
 }

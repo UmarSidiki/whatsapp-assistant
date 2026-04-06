@@ -38,6 +38,7 @@ import {
   clearBufferedMessagesForUser,
 } from "../messaging/segment.service";
 import { addScheduledMessage, restoreScheduledMessagesForUser } from "../scheduling/schedule.service";
+import { createTrialUsageRecord, getTrialUsageByPhoneNumber, normalizeTrialPhoneNumber } from "../../core/trial";
 import { db } from "../../database";
 import { aiSettings, messageLog } from "../../database/schema";
 
@@ -133,7 +134,7 @@ export async function init(userId: string): Promise<void> {
         status: session.status,
       });
       destroySocket(userId, session.socket);
-      setSession(userId, { socket: null, status: "idle", qr: undefined });
+      setSession(userId, { socket: null, status: "idle", qr: undefined, lastError: undefined, lastErrorAt: undefined });
     }
 
     logger.info("WhatsApp initializing", { userId });
@@ -141,7 +142,7 @@ export async function init(userId: string): Promise<void> {
     const { state, saveCreds } = await useMultiFileAuthState(authDir(userId));
     const { version } = await fetchLatestBaileysVersion();
 
-    setSession(userId, { status: "waiting_qr", qr: undefined });
+    setSession(userId, { status: "waiting_qr", qr: undefined, lastError: undefined, lastErrorAt: undefined });
 
     const sock = makeWASocket({
       version,
@@ -170,18 +171,74 @@ export async function init(userId: string): Promise<void> {
 
       if (qr) {
         clearReconnectTimer(userId);
-        setSession(userId, { qr, status: "waiting_qr" });
+        setSession(userId, { qr, status: "waiting_qr", lastError: undefined, lastErrorAt: undefined });
         logger.info("QR code generated", { userId });
       }
       if (connection === "open") {
-        clearReconnectTimer(userId);
-        setSession(userId, { status: "connected", qr: undefined });
-        logger.info("WhatsApp connected", { userId });
-        
-        // Restore pending scheduled messages for this active socket
-        restoreScheduledMessagesForUser(userId).catch(error => {
-          logger.error("Failed to restore scheduled messages for user", { userId, error: String(error) });
-        });
+        const rawConnectedPhone = sock.user?.id ?? "";
+        const connectedPhone = normalizeTrialPhoneNumber(jidToContactId(rawConnectedPhone));
+
+        if (!connectedPhone) {
+          logger.error("Connected WhatsApp phone could not be resolved", { userId, rawConnectedPhone });
+          setSession(userId, {
+            status: "disconnected",
+            socket: null,
+            qr: undefined,
+            lastError: "Could not verify connected WhatsApp number. Please try again.",
+            lastErrorAt: new Date().toISOString(),
+          });
+          destroySocket(userId, sock);
+          return;
+        }
+
+        getTrialUsageByPhoneNumber(connectedPhone)
+          .then(async (rows) => {
+            const existing = rows[0];
+            if (existing && existing.userId !== userId) {
+              logger.warn("Duplicate trial phone detected on WhatsApp scan", {
+                userId,
+                connectedPhone,
+                existingUserId: existing.userId,
+              });
+              setSession(userId, {
+                status: "disconnected",
+                socket: null,
+                qr: undefined,
+                lastError: "This WhatsApp number has already used a free trial.",
+                lastErrorAt: new Date().toISOString(),
+              });
+              destroySocket(userId, sock);
+              return;
+            }
+
+            if (!existing) {
+              await createTrialUsageRecord(connectedPhone, userId);
+            }
+
+            clearReconnectTimer(userId);
+            setSession(userId, { status: "connected", qr: undefined, lastError: undefined, lastErrorAt: undefined });
+            logger.info("WhatsApp connected", { userId, connectedPhone });
+
+            // Restore pending scheduled messages for this active socket
+            restoreScheduledMessagesForUser(userId).catch(error => {
+              logger.error("Failed to restore scheduled messages for user", { userId, error: String(error) });
+            });
+          })
+          .catch((error) => {
+            logger.error("Trial validation failed on WhatsApp connect", {
+              userId,
+              connectedPhone,
+              error: String(error),
+            });
+            setSession(userId, {
+              status: "disconnected",
+              socket: null,
+              qr: undefined,
+              lastError: "Unable to verify trial eligibility. Please try again.",
+              lastErrorAt: new Date().toISOString(),
+            });
+            destroySocket(userId, sock);
+          });
       }
       if (connection === "close") {
         clearReconnectTimer(userId);
@@ -191,11 +248,13 @@ export async function init(userId: string): Promise<void> {
         const loggedOut = code === DisconnectReason.loggedOut || requestedByUser;
         const currentQr = getSessionIfExists(userId)?.qr;
 
-        setSession(userId, {
-          status: loggedOut ? "disconnected" : "waiting_qr",
-          socket: null,
-          qr: loggedOut ? undefined : currentQr,
-        });
+          setSession(userId, {
+            status: loggedOut ? "disconnected" : "waiting_qr",
+            socket: null,
+            qr: loggedOut ? undefined : currentQr,
+            lastError: loggedOut ? undefined : getSessionIfExists(userId)?.lastError,
+            lastErrorAt: loggedOut ? undefined : getSessionIfExists(userId)?.lastErrorAt,
+          });
 
         if (loggedOut) {
           if (!requestedByUser) {
@@ -425,9 +484,9 @@ export async function disconnect(userId: string): Promise<void> {
 export function getStatus(userId: string) {
   const session = getSessionIfExists(userId);
   if (!session) {
-    return { status: "disconnected", qr: undefined };
+    return { status: "disconnected", qr: undefined, lastError: undefined };
   }
-  return { status: session.status, qr: session.qr };
+  return { status: session.status, qr: session.qr, lastError: session.lastError };
 }
 
 // ─── Auto-reconnect on server boot ────────────────────────────────────────────

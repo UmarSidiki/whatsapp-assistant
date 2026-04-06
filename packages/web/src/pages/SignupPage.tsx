@@ -16,17 +16,16 @@ export default function SignupPage() {
     if (!isPending && session) navigate("/dashboard", { replace: true });
   }, [session, isPending, navigate]);
 
-  const handleSignUp = async (name: string, email: string, password: string, inviteCode: string) => {
+  const handleSignUp = async (name: string, email: string, phoneNumber: string, password: string) => {
     setLoading(true);
     setError(undefined);
     try {
-      // Use direct fetch so we can send inviteCode through our server interceptor
       const apiUrl = API_BASE_URL;
       const res = await fetch(`${apiUrl}/api/auth/sign-up/email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ name, email, password, inviteCode }),
+        body: JSON.stringify({ name, email, phoneNumber, password }),
       });
       const data = await res.json();
       if (!res.ok) {
