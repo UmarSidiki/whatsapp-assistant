@@ -34,7 +34,8 @@ jobs:
             git pull origin main
 
             # 4. Install dependencies and Build using Bun
-            bun install
+            export NODE_ENV=development
+            bun install --frozen-lockfile --production=false
             bun run db:migrate
             bun run db:push
             bun run build
