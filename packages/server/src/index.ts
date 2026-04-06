@@ -5,11 +5,11 @@ import { adminRouter } from './modules/admin/routes'
 import { whatsappRouter } from './modules/whatsapp/routes'
 import { aiRouter } from './modules/ai/routes'
 import { logger } from './core/logger'
-import inviteCodes from './config/invite-codes.json'
-import { restoreScheduledMessages } from './modules/scheduling/schedule.service'
-import { autoReconnectAll } from './modules/whatsapp/wa-connection.service'
-import { startAIMaintenanceScheduler } from './modules/ai/ai-maintenance.service'
-import { apiGuard } from './core/api-guard-middleware'
+import { inviteCodes, getAppConfig } from './core/config'
+import { restoreScheduledMessages } from './modules/scheduling/services'
+import { autoReconnectAll } from './modules/whatsapp/services'
+import { startAIMaintenanceScheduler } from './modules/ai/services'
+import { apiGuard } from './core/middleware'
 
 declare const Bun: {
   serve: (options: { fetch: typeof app.fetch; port: number }) => unknown

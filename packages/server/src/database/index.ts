@@ -1,5 +1,9 @@
-import postgres from "postgres";
+// Re-export everything from schema
+export * from "./schema";
+
+// Database connection
 import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import * as schema from "./schema";
 
 const databaseUrl = process.env.DATABASE_URL;

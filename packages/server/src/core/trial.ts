@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../database";
-import { trialUsage, user } from "../database/schema";
+import { trialUsage, user } from "../database";
 import { logger } from "./logger";
 
 const TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;

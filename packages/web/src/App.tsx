@@ -1,11 +1,11 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { ADMIN_ROLES, useSession } from '@/lib/auth-client';
-import DashboardPage from '@/pages/DashboardPage';
-import LandingPage from '@/pages/LandingPage';
-import AdminPage from '@/pages/admin/AdminPage';
-import LoginPage from '@/pages/LoginPage';
-import SignupPage from '@/pages/SignupPage';
+import DashboardPage from '@/features/whatsapp/DashboardPage';
+import LandingPage from '@/features/auth/LandingPage';
+import AdminPage from '@/features/admin/AdminPage';
+import LoginPage from '@/features/auth/LoginPage';
+import SignupPage from '@/features/auth/SignupPage';
 
 function AppContent() {
   const { data: session, isPending } = useSession();
