@@ -6,13 +6,13 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently \"bun run --cwd packages/web dev\" \"bun --env-file=.env run --cwd packages/server dev\"",
-    "build": "bun run --cwd packages/web build && bun run --cwd packages/server build",
-    "start": "bun --env-file=.env run --cwd packages/server start",
-    "db:generate": "bun --env-file=.env run --cwd packages/server db:generate",
-    "db:migrate": "bun --env-file=.env run --cwd packages/server db:migrate",
-    "db:push": "bun --env-file=.env run --cwd packages/server db:push",
-    "db:studio": "bun --env-file=.env run --cwd packages/server db:studio",
+    "dev": "concurrently \"npm run dev --workspace web\" \"npm run dev --workspace server\"",
+    "build": "npm run build --workspace web && npm run build --workspace server",
+    "start": "npm run start --workspace server",
+    "db:generate": "npm run db:generate --workspace server",
+    "db:migrate": "npm run db:migrate --workspace server",
+    "db:push": "npm run db:push --workspace server",
+    "db:studio": "npm run db:studio --workspace server",
     "deploy": "bash scripts/deploy.sh"
   },
   "devDependencies": {

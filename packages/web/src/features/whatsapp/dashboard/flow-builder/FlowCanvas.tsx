@@ -22,19 +22,21 @@ import { NodeProperties } from "./NodeProperties";
 import type { FlowNodeData, FlowDefinition } from "./types";
 
 interface FlowCanvasProps {
+  apiUrl: string;
   initialData?: FlowDefinition;
   onChange?: (data: FlowDefinition) => void;
 }
 
 const DEFAULT_NODE_DATA: Record<string, FlowNodeData> = {
-  trigger: { keyword: "", matchType: "contains" },
+  trigger: { triggerMode: "keyword", keyword: "", matchType: "contains", inactivitySeconds: 12 * 60 * 60 },
   condition: { conditionField: "message", conditionOperator: "contains", conditionValue: "" },
   message: { messageText: "" },
+  image: { imageSource: "url", imageUrl: "", imageCaption: "" },
   buttons: { buttonText: "", buttonFooter: "", buttons: [] },
   delay: { delaySeconds: 3 },
 };
 
-function FlowCanvasInner({ initialData, onChange }: FlowCanvasProps) {
+function FlowCanvasInner({ apiUrl, initialData, onChange }: FlowCanvasProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const rf = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState(initialData?.nodes as Node[] ?? []);
@@ -187,6 +189,7 @@ function FlowCanvasInner({ initialData, onChange }: FlowCanvasProps) {
 
       {selectedNode && (
         <NodeProperties
+          apiUrl={apiUrl}
           nodeId={selectedNode.id}
           nodeType={selectedNode.type ?? "message"}
           data={selectedNode.data as FlowNodeData}

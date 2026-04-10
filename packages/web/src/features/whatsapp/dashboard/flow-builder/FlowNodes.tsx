@@ -1,15 +1,23 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Zap, GitBranch, MessageSquare, MousePointerClick, Timer } from "lucide-react";
+import { Zap, GitBranch, MessageSquare, MousePointerClick, Timer, Image as ImageIcon } from "lucide-react";
 import { NODE_COLORS, type FlowNodeData } from "./types";
 
 const HANDLE_STYLE = { width: 10, height: 10, borderRadius: "50%" };
+
+function formatInactivity(seconds: number): string {
+  if (seconds % 86_400 === 0) return `${seconds / 86_400}d`;
+  if (seconds % 3_600 === 0) return `${seconds / 3_600}h`;
+  if (seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${seconds}s`;
+}
 
 // ─── Trigger Node ─────────────────────────────────────────────────────────────
 
 function TriggerNodeComponent({ data, selected }: NodeProps) {
   const d = data as FlowNodeData;
   const c = NODE_COLORS.trigger;
+  const triggerMode = d.triggerMode ?? "keyword";
   return (
     <div className={`rounded-lg border-2 ${c.border} ${c.bg} px-4 py-3 min-w-[200px] shadow-sm ${selected ? "ring-2 ring-primary" : ""}`}>
       <div className={`flex items-center gap-2 font-semibold text-sm ${c.text} mb-1`}>
@@ -17,11 +25,17 @@ function TriggerNodeComponent({ data, selected }: NodeProps) {
         Trigger
       </div>
       <div className="text-xs text-muted-foreground">
-        {d.keyword ? (
+        {triggerMode === "keyword" && d.keyword ? (
           <>
             <span className="font-medium">"{d.keyword}"</span>
             <span className="ml-1 opacity-70">({d.matchType ?? "contains"})</span>
           </>
+        ) : triggerMode === "everyMessage" ? (
+          <span className="font-medium">Every incoming message</span>
+        ) : triggerMode === "inactivitySession" ? (
+          <span className="font-medium">
+            After {formatInactivity(d.inactivitySeconds ?? 12 * 60 * 60)} inactivity, then every message
+          </span>
         ) : (
           <span className="italic">Click to configure</span>
         )}
@@ -82,6 +96,35 @@ function MessageNodeComponent({ data, selected }: NodeProps) {
       </div>
       <div className="text-xs text-muted-foreground line-clamp-3">
         {d.messageText || <span className="italic">Click to configure</span>}
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ ...HANDLE_STYLE, background: c.accent }} />
+    </div>
+  );
+}
+
+// ─── Image Node ───────────────────────────────────────────────────────────────
+
+function ImageNodeComponent({ data, selected }: NodeProps) {
+  const d = data as FlowNodeData;
+  const c = NODE_COLORS.image;
+  return (
+    <div className={`rounded-lg border-2 ${c.border} ${c.bg} px-4 py-3 min-w-[200px] max-w-[280px] shadow-sm ${selected ? "ring-2 ring-primary" : ""}`}>
+      <Handle type="target" position={Position.Top} style={{ ...HANDLE_STYLE, background: c.accent }} />
+      <div className={`flex items-center gap-2 font-semibold text-sm ${c.text} mb-1`}>
+        <ImageIcon className="size-4" />
+        Send Image
+      </div>
+      <div className="text-xs text-muted-foreground space-y-0.5">
+        {d.imageUrl || d.imageAssetId ? (
+          <>
+            <p className="font-medium">
+              {d.imageSource === "upload" ? d.imageFileName || "Uploaded image" : "Image URL"}
+            </p>
+            {d.imageCaption ? <p className="line-clamp-2">{d.imageCaption}</p> : <p className="opacity-70">No caption</p>}
+          </>
+        ) : (
+          <span className="italic">Click to configure</span>
+        )}
       </div>
       <Handle type="source" position={Position.Bottom} style={{ ...HANDLE_STYLE, background: c.accent }} />
     </div>
@@ -173,6 +216,7 @@ function DelayNodeComponent({ data, selected }: NodeProps) {
 export const TriggerNode = memo(TriggerNodeComponent);
 export const ConditionNode = memo(ConditionNodeComponent);
 export const MessageNode = memo(MessageNodeComponent);
+export const ImageNode = memo(ImageNodeComponent);
 export const ButtonsNode = memo(ButtonsNodeComponent);
 export const DelayNode = memo(DelayNodeComponent);
 
@@ -180,6 +224,7 @@ export const nodeTypes = {
   trigger: TriggerNode,
   condition: ConditionNode,
   message: MessageNode,
+  image: ImageNode,
   buttons: ButtonsNode,
   delay: DelayNode,
 };

@@ -1,4 +1,4 @@
-import { Zap, GitBranch, MessageSquare, MousePointerClick, Timer } from "lucide-react";
+import { Zap, GitBranch, MessageSquare, MousePointerClick, Timer, Image as ImageIcon } from "lucide-react";
 import { NODE_COLORS } from "./types";
 
 interface NodeSidebarProps {
@@ -9,6 +9,7 @@ const SIDEBAR_ITEMS = [
   { type: "trigger", label: "Trigger", icon: Zap, description: "Start when message matches", colors: NODE_COLORS.trigger },
   { type: "condition", label: "Condition", icon: GitBranch, description: "Branch on a condition", colors: NODE_COLORS.condition },
   { type: "message", label: "Send Message", icon: MessageSquare, description: "Send a text reply", colors: NODE_COLORS.message },
+  { type: "image", label: "Send Image", icon: ImageIcon, description: "Send image with optional caption", colors: NODE_COLORS.image },
   { type: "buttons", label: "CTA Buttons", icon: MousePointerClick, description: "Send buttons (URL, call, reply)", colors: NODE_COLORS.buttons },
   { type: "delay", label: "Delay", icon: Timer, description: "Wait before continuing", colors: NODE_COLORS.delay },
 ] as const;

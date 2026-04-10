@@ -3,18 +3,19 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "bun --env-file=../../.env --watch src/index.ts",
+    "dev": "node --watch --env-file=../../.env --import tsx src/index.ts",
     "build": "tsup src/index.ts --format esm --clean",
-    "start": "bun --env-file=../../.env src/index.ts",
+    "start": "node --env-file=../../.env --import tsx src/index.ts",
     "ai-integration:test": "tsx ai-integration.test.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun --env-file=../../.env src/database/migrate.ts",
+    "db:migrate": "node --env-file=../../.env --import tsx src/database/migrate.ts",
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.5.3",
     "@google/generative-ai": "^0.24.1",
+    "@hono/node-server": "^1.19.9",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "drizzle-orm": "^0.45.1",
     "groq-sdk": "^0.37.0",

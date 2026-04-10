@@ -70,3 +70,40 @@ export async function sendCtaButtons(c: Context) {
     return { message: "Buttons sent" };
   });
 }
+
+export async function uploadFlowImage(c: Context) {
+  return handle(c, async () => {
+    const userId = c.get("userId") as string;
+    const formData = await c.req.formData();
+    const fileEntry = formData.get("file");
+    if (!fileEntry || typeof fileEntry === "string") {
+      throw new ServiceError("Image file is required", 400);
+    }
+
+    const file = fileEntry as File;
+    const uploaded = await flowService.uploadFlowImage(userId, file);
+    const origin = new URL(c.req.url).origin;
+    return {
+      ...uploaded,
+      imageUrl: `${origin}${uploaded.imageUrl}`,
+    };
+  }, 201);
+}
+
+export async function getFlowImage(c: Context) {
+  try {
+    const userId = c.get("userId") as string;
+    const assetId = c.req.param("assetId");
+    if (!assetId) throw new ServiceError("Missing assetId parameter", 400);
+    const asset = await flowService.getFlowImageAsset(userId, assetId);
+    return c.body(asset.buffer, 200, {
+      "content-type": asset.mimeType,
+      "cache-control": "private, max-age=300",
+    });
+  } catch (e) {
+    if (e instanceof ServiceError) {
+      return c.json({ error: e.message }, e.statusCode as 400 | 404);
+    }
+    throw e;
+  }
+}

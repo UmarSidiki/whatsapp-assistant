@@ -1,4 +1,4 @@
-import { pgTable, text, integer, boolean, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -206,6 +206,63 @@ export const template = pgTable("template", {
   index("template_user_idx").on(t.userId),
 ]);
 
+/** Persisted WhatsApp chat messages for dashboard chats/communities */
+export const waChatMessage = pgTable("wa_chat_message", {
+  id: text("id").primaryKey(),
+  userId: text("userId")
+    .notNull()
+    .references(() => user.id),
+  chatId: text("chatId").notNull(),
+  chatType: text("chatType").$type<"direct" | "group" | "broadcast" | "channel">().notNull(),
+  title: text("title"),
+  message: text("message").notNull(),
+  sender: text("sender").$type<"me" | "contact">().notNull(),
+  timestamp: timestamp("timestamp", { withTimezone: true, mode: "date" }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
+  /** When set, dashboard can re-download bytes via Baileys (JSON + BufferJSON). */
+  waMessagePayload: text("waMessagePayload"),
+  mediaKind: text("mediaKind"),
+}, (t) => [
+  index("wa_chat_message_user_type_ts_idx").on(t.userId, t.chatType, t.timestamp),
+  index("wa_chat_message_user_chat_ts_idx").on(t.userId, t.chatId, t.timestamp),
+  index("wa_chat_message_user_chat_idx").on(t.userId, t.chatId),
+]);
+
+/** Persistent chat list: stores every chat (direct/group) synced from WhatsApp. */
+export const waChat = pgTable("wa_chat", {
+  /** Composite key: `${userId}::${chatId}` */
+  id: text("id").primaryKey(),
+  userId: text("userId")
+    .notNull()
+    .references(() => user.id),
+  chatId: text("chatId").notNull(),
+  chatType: text("chatType").$type<"direct" | "group" | "broadcast" | "channel">().notNull(),
+  title: text("title"),
+  lastMessage: text("lastMessage"),
+  lastMessageAt: timestamp("lastMessageAt", { withTimezone: true, mode: "date" }),
+  unreadCount: integer("unreadCount").notNull().default(0),
+  /** Epoch seconds from Baileys conversationTimestamp */
+  conversationTimestamp: integer("conversationTimestamp"),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }).notNull(),
+}, (t) => [
+  index("wa_chat_user_type_idx").on(t.userId, t.chatType),
+  index("wa_chat_user_chatid_idx").on(t.userId, t.chatId),
+]);
+
+/** Per-user WhatsApp dashboard settings */
+export const waChatSettings = pgTable("wa_chat_settings", {
+  id: text("id").primaryKey(),
+  userId: text("userId")
+    .notNull()
+    .references(() => user.id)
+    .unique(),
+  historyLimit: integer("historyLimit").notNull().default(1000),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }).notNull(),
+}, (t) => [
+  index("wa_chat_settings_user_idx").on(t.userId),
+]);
+
 // ─── AI Assistant Tables ──────────────────────────────────────────────────────
 
 /** Store all messages per contact for AI context */
@@ -292,6 +349,28 @@ export const chatbotFlow = pgTable("chatbot_flow", {
 }, (t) => [
   index("chatbot_flow_user_idx").on(t.userId),
   index("chatbot_flow_user_enabled_idx").on(t.userId, t.enabled),
+]);
+
+/** Per-contact flow trigger runtime state (for inactivity-window trigger modes). */
+export const flowTriggerState = pgTable("flow_trigger_state", {
+  id: text("id").primaryKey(),
+  userId: text("userId")
+    .notNull()
+    .references(() => user.id),
+  flowId: text("flowId")
+    .notNull()
+    .references(() => chatbotFlow.id),
+  triggerNodeId: text("triggerNodeId").notNull(),
+  contactPhone: text("contactPhone").notNull(),
+  lastMessageAt: timestamp("lastMessageAt", { withTimezone: true, mode: "date" }).notNull(),
+  sessionActive: boolean("sessionActive").notNull().default(true),
+  createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true, mode: "date" }).notNull(),
+}, (t) => [
+  index("flow_trigger_state_user_idx").on(t.userId),
+  index("flow_trigger_state_flow_idx").on(t.flowId),
+  index("flow_trigger_state_lookup_idx").on(t.userId, t.contactPhone, t.updatedAt),
+  uniqueIndex("flow_trigger_state_unique_idx").on(t.userId, t.flowId, t.triggerNodeId, t.contactPhone),
 ]);
 
 /** Track API call counts for rate limit fallback */

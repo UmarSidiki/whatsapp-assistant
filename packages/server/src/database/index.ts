@@ -14,8 +14,11 @@ if (!databaseUrl) {
 
 const client = postgres(databaseUrl, {
 	max: Number(process.env.DB_POOL_MAX ?? 10),
-	idle_timeout: Number(process.env.DB_IDLE_TIMEOUT ?? 20),
+	// Keep pooled connections open by default. Bun + postgres reconnect path can emit
+	// noisy negative-timeout warnings when idle reconnect scheduling drifts.
+	idle_timeout: Number(process.env.DB_IDLE_TIMEOUT ?? 0),
 	connect_timeout: Number(process.env.DB_CONNECT_TIMEOUT ?? 10),
+	max_lifetime: Number(process.env.DB_MAX_LIFETIME ?? 0),
 	prepare: false,
 });
 

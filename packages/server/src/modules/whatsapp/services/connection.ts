@@ -1,5 +1,6 @@
 import { handleOwnCommand, handleAIResponse, OwnCommandContext } from "../../messaging/services";
 import { executeFlows } from "../../flow/services";
+import crypto from "crypto";
 import makeWASocket, {
   downloadMediaMessage,
   extractMessageContent,
@@ -14,7 +15,21 @@ import pino from "pino";
 import { existsSync, readdirSync, rmSync } from "fs";
 import { eq } from "drizzle-orm";
 import { logger } from "../../../core/logger";
-import { getSession, getSessionIfExists, setSession, removeSession, extractTextFromMessage, getContextInfoFromMessage, isIndividualJid, jidToContactId, getSocketFor, toJid, clearBackfillTrackerForUser, clearContactNamesForUser, upsertContactName, upsertContactNames } from "./socket";
+import {
+  getSession,
+  getSessionIfExists,
+  setSession,
+  removeSession,
+  extractTextFromMessage,
+  getContextInfoFromMessage,
+  jidToContactId,
+  getSocketFor,
+  toJid,
+  clearBackfillTrackerForUser,
+  clearContactNamesForUser,
+  upsertContactName,
+  upsertContactNames,
+} from "./socket";
 import { handleAutoReply } from "../../auto-reply/services";
 import {
   storeMessage,
@@ -41,6 +56,21 @@ import { addScheduledMessage, restoreScheduledMessagesForUser } from "../../sche
 import { createTrialUsageRecord, getTrialUsageByPhoneNumber, normalizeTrialPhoneNumber } from "../../../core/trial";
 import { db } from "../../../database";
 import { aiSettings, messageLog } from "../../../database";
+import { resolveChatTypeFromJid } from "./chat-jid";
+import {
+  getChatHistoryLimit,
+  persistChatsToDb,
+  storeChatMessage,
+  trimChatMessagesForChat,
+} from "./chats";
+import {
+  appendLiveThreadMessage,
+  clearLiveChatsForUser,
+  ingestChatsDelete,
+  ingestChatsUpdate,
+  ingestChatsUpsert,
+  touchChatFromMessage,
+} from "./live-chat-registry";
 
 // ─── Per-user auth directory ──────────────────────────────────────────────────
 
@@ -108,9 +138,56 @@ function clearRuntimeState(userId: string): void {
   clearMimicSettingsForUser(userId);
   clearBufferedMessagesForUser(userId);
   clearContactNamesForUser(userId);
+  clearLiveChatsForUser(userId);
+}
+
+function detectMediaKind(message: proto.IMessage | null | undefined): string | null {
+  if (!message) return null;
+  if (message.imageMessage) return "image";
+  if (message.videoMessage) return "video";
+  if (message.audioMessage) return message.audioMessage.ptt ? "voice" : "audio";
+  if (message.documentMessage) return "document";
+  if (message.stickerMessage) return "sticker";
+  return null;
 }
 
 // ─── Connection ───────────────────────────────────────────────────────────────
+
+/**
+ * Actively fetch all participating group metadata and ingest them into the
+ * live chat registry + store so the Communities tab shows groups immediately.
+ */
+async function fetchAndIngestGroups(
+  userId: string,
+  sock: WASocket,
+  store: { chats: Map<string, Record<string, unknown>>; contacts: Record<string, Record<string, unknown>> },
+): Promise<void> {
+  try {
+    const groups = await sock.groupFetchAllParticipating();
+    const chatBatch: Record<string, unknown>[] = [];
+    for (const [jid, metadata] of Object.entries(groups)) {
+      const rec: Record<string, unknown> = {
+        id: jid,
+        jid,
+        name: metadata.subject ?? jid,
+        subject: metadata.subject,
+        // Use creation timestamp so groups appear even without messages
+        conversationTimestamp: metadata.creation ? metadata.creation : undefined,
+      };
+      chatBatch.push(rec);
+      store.chats.set(jid, rec);
+    }
+    if (chatBatch.length > 0) {
+      ingestChatsUpsert(userId, chatBatch);
+      // Persist groups to DB so they survive server restarts
+      persistChatsToDb(userId, chatBatch as any[]).catch(() => {});
+      logger.info("Ingested group metadata from WhatsApp", { userId, groupCount: chatBatch.length });
+    }
+  } catch (e) {
+    // groupFetchAllParticipating may fail if disconnected during the call
+    logger.warn("fetchAndIngestGroups failed", { userId, error: String(e) });
+  }
+}
 
 /** Initialize the WhatsApp socket for a specific user. */
 export async function init(userId: string): Promise<void> {
@@ -134,7 +211,7 @@ export async function init(userId: string): Promise<void> {
         status: session.status,
       });
       destroySocket(userId, session.socket);
-      setSession(userId, { socket: null, status: "idle", qr: undefined, lastError: undefined, lastErrorAt: undefined });
+      setSession(userId, { socket: null, status: "idle", qr: undefined, lastError: undefined, lastErrorAt: undefined, store: undefined });
     }
 
     logger.info("WhatsApp initializing", { userId });
@@ -154,16 +231,80 @@ export async function init(userId: string): Promise<void> {
       browser: ["Ubuntu", "Chrome", "110.0.5481.77"],
     });
 
-    setSession(userId, { socket: sock });
+    // Lightweight store: We cache chats and contacts from Baileys events.
+    // Baileys v7 removed makeInMemoryStore; we use our own map-based cache.
+    const store: { chats: Map<string, Record<string, unknown>>; contacts: Record<string, Record<string, unknown>> } = {
+      chats: new Map(),
+      contacts: {},
+    };
+
+    setSession(userId, { socket: sock, store });
+
+    sock.ev.on("chats.upsert" as any, (batch: unknown[]) => {
+      if (!isCurrentSocket(userId, sock) || !Array.isArray(batch)) return;
+      ingestChatsUpsert(userId, batch);
+      // Populate store.chats for fallback resolution
+      for (const item of batch) {
+        if (item && typeof item === "object" && !Array.isArray(item)) {
+          const rec = item as Record<string, unknown>;
+          const id = (typeof rec.id === "string" && rec.id) || (typeof rec.jid === "string" && rec.jid) || "";
+          if (id) store.chats.set(id, rec);
+        }
+      }
+      // Persist chat list to DB so it survives server restarts
+      persistChatsToDb(userId, batch as any[]).catch(() => {});
+    });
+
+    sock.ev.on("chats.update" as any, (batch: unknown[]) => {
+      if (!isCurrentSocket(userId, sock) || !Array.isArray(batch)) return;
+      ingestChatsUpdate(userId, batch);
+      // Merge updates into store.chats
+      for (const item of batch) {
+        if (item && typeof item === "object" && !Array.isArray(item)) {
+          const rec = item as Record<string, unknown>;
+          const id = (typeof rec.id === "string" && rec.id) || (typeof rec.jid === "string" && rec.jid) || "";
+          if (id) {
+            const existing = store.chats.get(id);
+            store.chats.set(id, existing ? { ...existing, ...rec } : rec);
+          }
+        }
+      }
+    });
+
+    sock.ev.on("chats.delete" as any, (ids: unknown) => {
+      if (!isCurrentSocket(userId, sock)) return;
+      ingestChatsDelete(userId, ids);
+      // Remove from store.chats
+      if (Array.isArray(ids)) {
+        for (const id of ids) {
+          if (typeof id === "string") store.chats.delete(id);
+        }
+      }
+    });
 
     sock.ev.on("contacts.upsert" as any, (contacts: any[]) => {
       if (!isCurrentSocket(userId, sock) || !Array.isArray(contacts)) return;
       upsertContactNames(userId, contacts as any);
+      // Populate store.contacts for fallback resolution
+      for (const c of contacts) {
+        const id = c?.id ?? c?.jid;
+        if (typeof id === "string" && id) {
+          store.contacts[id] = c;
+        }
+      }
     });
 
     sock.ev.on("contacts.update" as any, (contacts: any[]) => {
       if (!isCurrentSocket(userId, sock) || !Array.isArray(contacts)) return;
       upsertContactNames(userId, contacts as any);
+      // Merge contact updates into store.contacts
+      for (const c of contacts) {
+        const id = c?.id ?? c?.jid;
+        if (typeof id === "string" && id) {
+          const existing = store.contacts[id];
+          store.contacts[id] = existing ? { ...existing, ...c } : c;
+        }
+      }
     });
 
     sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
@@ -218,6 +359,12 @@ export async function init(userId: string): Promise<void> {
             clearReconnectTimer(userId);
             setSession(userId, { status: "connected", qr: undefined, lastError: undefined, lastErrorAt: undefined });
             logger.info("WhatsApp connected", { userId, connectedPhone });
+
+            // Actively fetch all participating groups to populate the Communities tab.
+            // Baileys may not include groups in the initial chats.upsert event.
+            fetchAndIngestGroups(userId, sock, store).catch((e) => {
+              logger.warn("Failed to fetch groups on connect", { userId, error: String(e) });
+            });
 
             // Restore pending scheduled messages for this active socket
             restoreScheduledMessagesForUser(userId).catch(error => {
@@ -281,6 +428,31 @@ export async function init(userId: string): Promise<void> {
     sock.ev.on("messaging-history.set" as any, async (data: any) => {
       if (!isCurrentSocket(userId, sock)) return;
 
+      if (Array.isArray(data?.chats) && data.chats.length > 0) {
+        ingestChatsUpsert(userId, data.chats);
+        // Populate store.chats from history
+        for (const item of data.chats) {
+          if (item && typeof item === "object") {
+            const id = item.id ?? item.jid ?? "";
+            if (typeof id === "string" && id) store.chats.set(id, item);
+          }
+        }
+        // Persist chat list to DB
+        persistChatsToDb(userId, data.chats).catch(() => {});
+      }
+
+      // History sync also delivers contacts — ingest their names
+      if (Array.isArray(data?.contacts) && data.contacts.length > 0) {
+        upsertContactNames(userId, data.contacts);
+        // Populate store.contacts from history
+        for (const c of data.contacts) {
+          const id = c?.id ?? c?.jid;
+          if (typeof id === "string" && id) {
+            store.contacts[id] = c;
+          }
+        }
+      }
+
       const historyMessages = data?.messages;
       if (!Array.isArray(historyMessages) || historyMessages.length === 0) return;
 
@@ -291,29 +463,71 @@ export async function init(userId: string): Promise<void> {
 
       let stored = 0;
       const touchedContacts = new Set<string>();
+      const touchedChatIds = new Set<string>();
+      const chatHistoryLimit = await getChatHistoryLimit(userId);
 
       for (const msg of historyMessages) {
         if (!isCurrentSocket(userId, sock)) return;
 
         try {
           const jid = msg.key?.remoteJid ?? "";
-          if (!isIndividualJid(jid)) continue;
-
+          const chatType = resolveChatTypeFromJid(jid);
+          if (!chatType) continue;
           const text = extractTextFromMessage(msg.message);
-          if (!text) continue;
+          const hasPayload = Boolean(msg.message);
+          if (!hasPayload && !text) continue;
 
-          const contactPhone = jidToContactId(jid);
-          if (!msg.key.fromMe && typeof msg.pushName === "string" && msg.pushName.trim()) {
-            upsertContactName(userId, contactPhone, msg.pushName);
-          }
           const sender = msg.key.fromMe ? "me" : "contact";
           const ts = msg.messageTimestamp
             ? new Date(Number(msg.messageTimestamp) * 1000)
             : new Date();
 
-          await storeMessage(userId, contactPhone, text, sender, ts, { skipTrim: true });
-          touchedContacts.add(contactPhone);
-          stored++;
+          if (chatType === "direct") {
+            const contactPhone = jidToContactId(jid);
+            if (!msg.key.fromMe && typeof msg.pushName === "string" && msg.pushName.trim()) {
+              upsertContactName(userId, contactPhone, msg.pushName);
+            }
+
+            if (text) {
+              await storeMessage(userId, contactPhone, text, sender, ts, { skipTrim: true });
+              touchedContacts.add(contactPhone);
+            }
+          }
+
+          const storedChat = await storeChatMessage(
+            userId,
+            {
+              jid,
+              message: msg.message ?? undefined,
+              sender,
+              timestamp: ts,
+              title: !msg.key.fromMe && typeof msg.pushName === "string" ? msg.pushName : undefined,
+              waMessage: msg,
+            },
+            { skipTrim: true, historyLimit: chatHistoryLimit }
+          );
+          if (storedChat) {
+            touchedChatIds.add(storedChat.chatId);
+            stored++;
+          }
+
+          const preview =
+            extractTextFromMessage(msg.message) || (msg.message ? "[Media]" : undefined);
+          if (preview || ts) {
+            touchChatFromMessage(userId, jid, {
+              lastMessage: preview,
+              lastMessageAt: ts.toISOString(),
+              title: !msg.key.fromMe && typeof msg.pushName === "string" ? msg.pushName : undefined,
+            });
+            appendLiveThreadMessage(userId, jid, {
+              id: msg.key?.id || crypto.randomUUID(),
+              sender,
+              message: preview || "[Message]",
+              timestamp: ts.toISOString(),
+              mediaKind: detectMediaKind(msg.message ?? undefined),
+              hasMediaPayload: Boolean(msg.message),
+            });
+          }
         } catch {
           // best-effort — skip individual message failures
         }
@@ -335,10 +549,25 @@ export async function init(userId: string): Promise<void> {
       });
       await Promise.all(trimPromises);
 
+      const chatTrimPromises: Array<Promise<void>> = [];
+      touchedChatIds.forEach((chatId) => {
+        chatTrimPromises.push(
+          trimChatMessagesForChat(userId, chatId, chatHistoryLimit).catch((error) => {
+            logger.warn("Failed to trim persisted chat history", {
+              userId,
+              chatId,
+              error: String(error),
+            });
+          })
+        );
+      });
+      await Promise.all(chatTrimPromises);
+
       logger.info("[History Sync] Stored bulk history messages", {
         userId,
         storedCount: stored,
         trimmedContacts: touchedContacts.size,
+        trimmedChats: touchedChatIds.size,
       });
     });
 
@@ -347,18 +576,28 @@ export async function init(userId: string): Promise<void> {
       if (!isCurrentSocket(userId, sock)) return;
 
       logger.info("[Message Upsert] Event", { userId, type, count: messages.length });
+      const chatHistoryLimit = await getChatHistoryLimit(userId);
 
       for (const msg of messages) {
         if (!isCurrentSocket(userId, sock)) return;
 
         const jid = msg.key.remoteJid ?? "";
-        if (!isIndividualJid(jid)) continue;
+        const chatType = resolveChatTypeFromJid(jid);
+        if (!chatType) continue;
 
         const text = extractTextFromMessage(msg.message);
-        if (!text) continue;
+        const hasText = Boolean(text);
+        const hasPayload = Boolean(msg.message);
+        if (!hasPayload && !hasText) continue;
 
-        const contactPhone = jidToContactId(jid);
-        if (!msg.key.fromMe && typeof msg.pushName === "string" && msg.pushName.trim()) {
+        const isDirectChat = chatType === "direct";
+        const contactPhone = isDirectChat ? jidToContactId(jid) : "";
+        if (
+          isDirectChat &&
+          !msg.key.fromMe &&
+          typeof msg.pushName === "string" &&
+          msg.pushName.trim()
+        ) {
           upsertContactName(userId, contactPhone, msg.pushName);
         }
         const sender = msg.key.fromMe ? "me" : "contact";
@@ -369,20 +608,64 @@ export async function init(userId: string): Promise<void> {
             ? new Date(Number(msg.messageTimestamp) * 1000)
             : new Date();
 
-        storeMessage(userId, contactPhone, text, sender, ts).catch((e) => {
-          logger.error("Failed to store message", {
+        if (isDirectChat && hasText) {
+          storeMessage(userId, contactPhone, text, sender, ts).catch((e) => {
+            logger.error("Failed to store message", {
+              userId,
+              contactPhone,
+              error: String(e),
+            });
+          });
+        }
+
+        storeChatMessage(
+          userId,
+          {
+            jid,
+            message: msg.message ?? undefined,
+            sender,
+            timestamp: ts,
+            title: !msg.key.fromMe && typeof msg.pushName === "string" ? msg.pushName : undefined,
+            waMessage: msg,
+          },
+          {
+            historyLimit: chatHistoryLimit,
+          }
+        ).catch((error) => {
+          logger.error("Failed to persist chat message", {
             userId,
-            contactPhone,
-            error: String(e),
+            jid,
+            error: String(error),
           });
         });
+
+        const preview =
+          extractTextFromMessage(msg.message) || (msg.message ? "[Media]" : undefined);
+        if (preview || ts) {
+          touchChatFromMessage(userId, jid, {
+            lastMessage: preview,
+            lastMessageAt: ts.toISOString(),
+            title: !msg.key.fromMe && typeof msg.pushName === "string" ? msg.pushName : undefined,
+          });
+          appendLiveThreadMessage(userId, jid, {
+            id: msg.key?.id || crypto.randomUUID(),
+            sender,
+            message: preview || "[Message]",
+            timestamp: ts.toISOString(),
+            mediaKind: detectMediaKind(msg.message ?? undefined),
+            hasMediaPayload: Boolean(msg.message),
+          });
+        }
+
+        // Keep existing automations and command logic scoped to direct chats only.
+        if (!isDirectChat) continue;
 
         // Only respond to real-time messages
         if (type !== "notify") continue;
 
         if (msg.key.fromMe) {
           // Handle own-message commands: !me, !mimic, !refresh, !ai status
-          if (text.trim().startsWith("!")) {
+          if (hasText && text.trim().startsWith("!")) {
             const ctxInfo = getContextInfoFromMessage(msg.message);
             const commandContext: OwnCommandContext = {
               quotedText: extractTextFromMessage(ctxInfo?.quotedMessage) || undefined,
@@ -403,7 +686,7 @@ export async function init(userId: string): Promise<void> {
         } else {
           const ctxInfo = getContextInfoFromMessage(msg.message);
           const quotedText = extractTextFromMessage(ctxInfo?.quotedMessage) || undefined;
-          const isContactCommand = text.trim().startsWith("!");
+          const isContactCommand = hasText && text.trim().startsWith("!");
 
           if (isContactCommand) {
             await handleAIResponse(userId, jid, contactPhone, text, {
@@ -414,8 +697,10 @@ export async function init(userId: string): Promise<void> {
           }
 
           // Chatbot flows fire immediately (no buffering needed)
-          const flowMatched = await executeFlows(userId, jid, text);
+           const flowMatched = await executeFlows(userId, jid, text ?? "", { receivedAt: ts });
           if (flowMatched) continue;
+
+          if (!hasText) continue;
 
           // Auto-reply fires immediately (no buffering needed)
           const autoReplied = await handleAutoReply(userId, jid, text);

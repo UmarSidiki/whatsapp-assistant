@@ -4,11 +4,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { X, Plus, Trash2 } from "lucide-react";
+import { X, Plus, Trash2, Loader2 } from "lucide-react";
 import type { FlowNodeData, FlowButton, ListSection, ListRow } from "./types";
 import { NODE_COLORS } from "./types";
 
 interface NodePropertiesProps {
+  apiUrl: string;
   nodeId: string;
   nodeType: string;
   data: FlowNodeData;
@@ -17,7 +18,7 @@ interface NodePropertiesProps {
   onDelete: (nodeId: string) => void;
 }
 
-export function NodeProperties({ nodeId, nodeType, data, onChange, onClose, onDelete }: NodePropertiesProps) {
+export function NodeProperties({ apiUrl, nodeId, nodeType, data, onChange, onClose, onDelete }: NodePropertiesProps) {
   const [local, setLocal] = useState<FlowNodeData>({ ...data });
   const [prevNodeId, setPrevNodeId] = useState(nodeId);
   const [prevData, setPrevData] = useState(data);
@@ -51,6 +52,7 @@ export function NodeProperties({ nodeId, nodeType, data, onChange, onClose, onDe
         {nodeType === "trigger" && <TriggerFields data={local} update={update} />}
         {nodeType === "condition" && <ConditionFields data={local} update={update} />}
         {nodeType === "message" && <MessageFields data={local} update={update} />}
+        {nodeType === "image" && <ImageFields apiUrl={apiUrl} data={local} update={update} />}
         {nodeType === "buttons" && <ButtonsFields data={local} update={update} />}
         {nodeType === "delay" && <DelayFields data={local} update={update} />}
       </div>
@@ -70,30 +72,119 @@ export function NodeProperties({ nodeId, nodeType, data, onChange, onClose, onDe
 }
 
 function TriggerFields({ data, update }: { data: FlowNodeData; update: (p: Partial<FlowNodeData>) => void }) {
+  const triggerMode = data.triggerMode ?? "keyword";
+  const inactivitySeconds = Math.max(60, data.inactivitySeconds ?? 12 * 60 * 60);
+  const inactivityPresets = [
+    { label: "12 hours", value: 12 * 60 * 60 },
+    { label: "24 hours", value: 24 * 60 * 60 },
+    { label: "2 days", value: 2 * 24 * 60 * 60 },
+    { label: "7 days", value: 7 * 24 * 60 * 60 },
+  ] as const;
+  const selectedPreset = inactivityPresets.find((preset) => preset.value === inactivitySeconds);
+
   return (
     <>
       <div className="space-y-1.5">
-        <Label className="text-xs">Keyword</Label>
-        <Input
-          placeholder="e.g. hello, help, pricing"
-          value={data.keyword ?? ""}
-          onChange={(e) => update({ keyword: e.target.value })}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label className="text-xs">Match Type</Label>
-        <Select value={data.matchType ?? "contains"} onValueChange={(v) => update({ matchType: v as FlowNodeData["matchType"] })}>
+        <Label className="text-xs">Trigger Mode</Label>
+        <Select
+          value={triggerMode}
+          onValueChange={(v) =>
+            update({
+              triggerMode: v as FlowNodeData["triggerMode"],
+              ...(v !== "keyword" ? { keyword: "", matchType: "contains" } : {}),
+            })
+          }
+        >
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="exact">Exact match</SelectItem>
-            <SelectItem value="contains">Contains</SelectItem>
-            <SelectItem value="startsWith">Starts with</SelectItem>
-            <SelectItem value="regex">Regex</SelectItem>
+            <SelectItem value="keyword">Keyword match</SelectItem>
+            <SelectItem value="everyMessage">Every message</SelectItem>
+            <SelectItem value="inactivitySession">Inactivity session</SelectItem>
           </SelectContent>
         </Select>
       </div>
+
+      {triggerMode === "keyword" && (
+        <>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Keyword</Label>
+            <Input
+              placeholder="e.g. hello, help, pricing"
+              value={data.keyword ?? ""}
+              onChange={(e) => update({ keyword: e.target.value })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Match Type</Label>
+            <Select value={data.matchType ?? "contains"} onValueChange={(v) => update({ matchType: v as FlowNodeData["matchType"] })}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="exact">Exact match</SelectItem>
+                <SelectItem value="contains">Contains</SelectItem>
+                <SelectItem value="startsWith">Starts with</SelectItem>
+                <SelectItem value="regex">Regex</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-[10px] text-muted-foreground bg-muted/40 rounded p-1.5 border">
+            Flow starts when message text matches your keyword rule.
+          </p>
+        </>
+      )}
+
+      {triggerMode === "everyMessage" && (
+        <p className="text-[10px] text-muted-foreground bg-muted/40 rounded p-1.5 border">
+          Flow runs on every incoming message from the contact.
+        </p>
+      )}
+
+      {triggerMode === "inactivitySession" && (
+        <>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Inactivity window</Label>
+            <Select
+              value={selectedPreset ? String(selectedPreset.value) : "custom"}
+              onValueChange={(v) => {
+                if (v === "custom") return;
+                update({ inactivitySeconds: Number(v) });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {inactivityPresets.map((preset) => (
+                  <SelectItem key={preset.value} value={String(preset.value)}>
+                    {preset.label}
+                  </SelectItem>
+                ))}
+                <SelectItem value="custom">Custom</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {!selectedPreset && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Custom inactivity (minutes)</Label>
+              <Input
+                type="number"
+                min={1}
+                value={Math.max(1, Math.round(inactivitySeconds / 60))}
+                onChange={(e) => {
+                  const minutes = Math.max(1, Number(e.target.value) || 1);
+                  update({ inactivitySeconds: minutes * 60 });
+                }}
+              />
+            </div>
+          )}
+          <p className="text-[10px] text-muted-foreground bg-emerald-500/5 rounded p-1.5 border border-emerald-500/20">
+            First message after this inactivity window triggers the flow, then every subsequent message keeps triggering until the inactivity gap exceeds this window again.
+          </p>
+        </>
+      )}
     </>
   );
 }
@@ -155,6 +246,135 @@ function MessageFields({ data, update }: { data: FlowNodeData; update: (p: Parti
           Variables: <code>{"{message}"}</code>, <code>{"{sender}"}</code>, <code>{"{phone}"}</code>
         </p>
       </div>
+    </>
+  );
+}
+
+function ImageFields({
+  apiUrl,
+  data,
+  update,
+}: {
+  apiUrl: string;
+  data: FlowNodeData;
+  update: (p: Partial<FlowNodeData>) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const source = data.imageSource ?? "url";
+  const previewUrl = data.imageUrl
+    ? /^https?:\/\//i.test(data.imageUrl)
+      ? data.imageUrl
+      : `${apiUrl}${data.imageUrl}`
+    : "";
+
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    setUploadError("");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${apiUrl}/api/whatsapp/flows/upload-image`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setUploadError(payload.message || "Image upload failed.");
+        return;
+      }
+
+      update({
+        imageSource: "upload",
+        imageAssetId: payload.assetId,
+        imageUrl: payload.imageUrl,
+        imageMimeType: payload.mimeType,
+        imageFileName: payload.fileName,
+      });
+    } catch {
+      setUploadError("Image upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="space-y-1.5">
+        <Label className="text-xs">Image source</Label>
+        <Select value={source} onValueChange={(v) => update({ imageSource: v as FlowNodeData["imageSource"] })}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="url">Image URL</SelectItem>
+            <SelectItem value="upload">Upload file</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {source === "url" && (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Image URL</Label>
+          <Input
+            placeholder="https://example.com/image.jpg"
+            value={data.imageUrl ?? ""}
+            onChange={(e) => update({ imageUrl: e.target.value })}
+          />
+        </div>
+      )}
+
+      {source === "upload" && (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Upload image</Label>
+          <Input
+            type="file"
+            accept="image/*"
+            disabled={uploading}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              void uploadFile(file);
+              e.currentTarget.value = "";
+            }}
+          />
+          {uploading && (
+            <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+              <Loader2 className="size-3 animate-spin" />
+              Uploading image…
+            </p>
+          )}
+          {data.imageFileName && !uploading && (
+            <p className="text-[10px] text-muted-foreground">Uploaded: {data.imageFileName}</p>
+          )}
+          {uploadError && <p className="text-[10px] text-destructive">{uploadError}</p>}
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        <Label className="text-xs">Caption (optional)</Label>
+        <Textarea
+          placeholder="Add a caption for this image…"
+          rows={3}
+          value={data.imageCaption ?? ""}
+          onChange={(e) => update({ imageCaption: e.target.value })}
+        />
+        <p className="text-[10px] text-muted-foreground">
+          Variables: <code>{"{message}"}</code>, <code>{"{sender}"}</code>, <code>{"{phone}"}</code>
+        </p>
+      </div>
+
+      {previewUrl && (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Preview</Label>
+          <img
+            src={previewUrl}
+            alt="Flow image preview"
+            className="w-full max-h-44 object-contain rounded border bg-muted/20"
+          />
+        </div>
+      )}
     </>
   );
 }

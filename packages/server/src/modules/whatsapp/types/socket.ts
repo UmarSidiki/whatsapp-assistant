@@ -10,6 +10,8 @@ export type WAStatus = "idle" | "waiting_qr" | "connected" | "disconnected";
  */
 export interface WAState {
   socket: WASocket | null;
+  /** Baileys in-memory store bound to the socket's events. */
+  store?: any;
   status: WAStatus;
   qr: string | undefined;
   lastError?: string;

@@ -8,6 +8,8 @@ import * as autoreply from "../../auto-reply/controllers";
 import * as flow from "../../flow/controllers";
 import * as stats from "../../analytics/controllers";
 import * as templates from "../../templates/controllers";
+import * as chats from "../controllers/chats.controller";
+import * as settings from "../controllers/settings.controller";
 
 const router = new Hono();
 
@@ -19,9 +21,15 @@ router.post("/init", connection.initConnection);
 router.get("/status", connection.getStatus);
 router.post("/disconnect", connection.disconnect);
 router.get("/stats", stats.getStats);
+router.get("/chats", chats.getChats);
+router.get("/chats/:chatId/messages", chats.getChatMessages);
+router.get("/messages/:messageId/media", chats.getMessageMedia);
+router.get("/settings", settings.getSettings);
+router.post("/settings", settings.updateSettings);
 
 // Single message
 router.post("/send", message.sendMessage);
+router.post("/send-media", message.sendMedia);
 
 // Bulk messages
 router.post("/bulk-send", bulk.startBulkSend);
@@ -50,6 +58,8 @@ router.get("/flows/:id", flow.getFlow);
 router.post("/flows", flow.createFlow);
 router.patch("/flows/:id", flow.updateFlow);
 router.delete("/flows/:id", flow.deleteFlow);
+router.post("/flows/upload-image", flow.uploadFlowImage);
+router.get("/flows/images/:assetId", flow.getFlowImage);
 
 // CTA Buttons
 router.post("/send-buttons", flow.sendCtaButtons);

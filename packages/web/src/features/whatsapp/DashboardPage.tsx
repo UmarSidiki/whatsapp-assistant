@@ -7,8 +7,11 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageCircle,
   MessageSquareReply,
+  Settings,
   Send,
+  Users,
   Workflow,
   Zap,
   Wifi,
@@ -22,6 +25,12 @@ import { cn } from "@/lib/utils";
 const OverviewPage = lazy(() => import("./dashboard/OverviewPage"));
 const ConnectionTab = lazy(() =>
   import("./dashboard/ConnectionTab").then((mod) => ({ default: mod.ConnectionTab }))
+);
+const ChatsTab = lazy(() =>
+  import("./dashboard/ChatsTab").then((mod) => ({ default: mod.ChatsTab }))
+);
+const CommunitiesTab = lazy(() =>
+  import("./dashboard/CommunitiesTab").then((mod) => ({ default: mod.CommunitiesTab }))
 );
 const BulkMessagesTab = lazy(() =>
   import("./dashboard/BulkMessagesTab").then((mod) => ({ default: mod.BulkMessagesTab }))
@@ -41,50 +50,65 @@ const AIAssistantTab = lazy(() =>
 const FlowBuilderTab = lazy(() =>
   import("./dashboard/FlowBuilderTab").then((mod) => ({ default: mod.FlowBuilderTab }))
 );
+const SettingsTab = lazy(() =>
+  import("./dashboard/SettingsTab").then((mod) => ({ default: mod.SettingsTab }))
+);
 
 type Page =
   | "overview"
   | "connection"
+  | "chats"
+  | "communities"
   | "bulk"
   | "schedule"
   | "auto-reply"
   | "flow-builder"
   | "templates"
-  | "ai-assistant";
+  | "ai-assistant"
+  | "settings";
 
-type TabProps = { apiUrl: string };
+type TabProps = { apiUrl: string; onNavigate?: (page: Page) => void };
 
 const NAV_ITEMS: { id: Page; label: string; icon: React.ComponentType<{ className?: string }>; desc: string }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard, desc: "Dashboard stats" },
   { id: "connection", label: "Connection", icon: Wifi, desc: "WhatsApp link" },
+  { id: "chats", label: "Chats", icon: MessageCircle, desc: "1:1 conversations" },
+  { id: "communities", label: "Communities", icon: Users, desc: "Groups & channels" },
   { id: "bulk", label: "Bulk Messages", icon: Send, desc: "Send to many" },
   { id: "schedule", label: "Scheduled", icon: CalendarClock, desc: "Timed messages" },
   { id: "auto-reply", label: "Auto Reply", icon: MessageSquareReply, desc: "Auto responses" },
   { id: "flow-builder", label: "Flows", icon: Workflow, desc: "Automation flows" },
   { id: "templates", label: "Templates", icon: FileText, desc: "Message templates" },
   { id: "ai-assistant", label: "AI Assistant", icon: Zap, desc: "AI powered replies" },
+  { id: "settings", label: "Settings", icon: Settings, desc: "Chat data preferences" },
 ];
 
 const PAGE_TITLES: Record<Page, string> = {
   overview: "Overview",
   connection: "Connection",
+  chats: "Chats",
+  communities: "Communities",
   bulk: "Bulk Messages",
   schedule: "Scheduled Messages",
   "auto-reply": "Auto Reply",
   "flow-builder": "Flow Builder",
   templates: "Templates",
   "ai-assistant": "AI Assistant",
+  settings: "Settings",
 };
 
 const PAGE_COMPONENTS: Record<Page, React.ComponentType<TabProps>> = {
   overview: OverviewPage,
   connection: ConnectionTab,
+  chats: ChatsTab,
+  communities: CommunitiesTab,
   bulk: BulkMessagesTab,
   schedule: ScheduleTab,
   "auto-reply": AutoReplyTab,
   "flow-builder": FlowBuilderTab,
   templates: TemplatesTab,
   "ai-assistant": AIAssistantTab,
+  settings: SettingsTab,
 };
 
 export default function DashboardPage() {
@@ -292,7 +316,7 @@ export default function DashboardPage() {
                   </div>
                 }
               >
-                <ActivePage apiUrl={apiUrl} />
+                <ActivePage apiUrl={apiUrl} onNavigate={setActivePage} />
               </Suspense>
             </div>
           </div>

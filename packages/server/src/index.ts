@@ -103,7 +103,8 @@ app.get('/api/health', (c) => {
 })
 
 // Serve static frontend files
-import { serveStatic } from 'hono/bun'
+import { serveStatic } from '@hono/node-server/serve-static'
+import { serve } from '@hono/node-server'
 
 // API guard: prevent unmatched /api/* routes from falling through to SPA
 app.use('*', apiGuard)
@@ -114,7 +115,7 @@ app.use('*', serveStatic({ path: '../web/dist/index.html' })) // SPA fallback
 const port = Number(process.env.PORT || 3000)
 
 console.log(`Server is running on http://localhost:${port}`)
-Bun.serve({
+serve({
   fetch: app.fetch,
   port,
 })

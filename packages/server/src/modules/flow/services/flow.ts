@@ -1,8 +1,11 @@
 import { logger } from "../../../core/logger";
 import { ServiceError, getSocketFor, jidToContactId, toJid, resolvePhoneNumber } from "../../whatsapp/services";
 import { db } from "../../../database";
-import { chatbotFlow, messageLog } from "../../../database";
+import { chatbotFlow, messageLog, flowTriggerState } from "../../../database";
 import { eq, and, desc } from "drizzle-orm";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import {
   generateWAMessageFromContent,
   normalizeMessageContent,
@@ -16,14 +19,23 @@ import {
 export interface FlowNodeData {
   label?: string;
   // Trigger node
+  triggerMode?: "keyword" | "everyMessage" | "inactivitySession";
   keyword?: string;
   matchType?: "exact" | "contains" | "startsWith" | "regex";
+  inactivitySeconds?: number;
   // Condition node
   conditionField?: "message" | "sender";
   conditionOperator?: "equals" | "contains" | "startsWith" | "regex" | "notContains";
   conditionValue?: string;
   // Message node
   messageText?: string;
+  // Image node
+  imageSource?: "url" | "upload";
+  imageUrl?: string;
+  imageCaption?: string;
+  imageAssetId?: string;
+  imageMimeType?: string;
+  imageFileName?: string;
   // Buttons node
   buttonText?: string;
   buttonFooter?: string;
@@ -58,7 +70,7 @@ export interface FlowButton {
 
 export interface FlowNode {
   id: string;
-  type: "trigger" | "condition" | "message" | "buttons" | "delay";
+  type: "trigger" | "condition" | "message" | "image" | "buttons" | "delay";
   position: { x: number; y: number };
   data: FlowNodeData;
 }
@@ -86,6 +98,136 @@ export interface ChatbotFlow {
   priority: number;
 }
 
+export interface UploadedFlowImage {
+  assetId: string;
+  imageUrl: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+const IMAGE_UPLOAD_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const INACTIVITY_DEFAULT_SECONDS = 12 * 60 * 60;
+const INACTIVITY_MIN_SECONDS = 60;
+const INACTIVITY_MAX_SECONDS = 30 * 24 * 60 * 60;
+const IMAGE_STORAGE_ROOT = path.resolve(process.cwd(), "storage", "flow-images");
+
+function isAllowedNodeType(type: string): type is FlowNode["type"] {
+  return ["trigger", "condition", "message", "image", "buttons", "delay"].includes(type);
+}
+
+function normalizeFlowNodeData(type: FlowNode["type"], data: FlowNodeData): FlowNodeData {
+  if (type === "trigger") {
+    const triggerMode = data.triggerMode ?? "keyword";
+    return {
+      ...data,
+      triggerMode,
+      matchType: data.matchType ?? "contains",
+      inactivitySeconds: Math.max(
+        INACTIVITY_MIN_SECONDS,
+        Math.min(INACTIVITY_MAX_SECONDS, data.inactivitySeconds ?? INACTIVITY_DEFAULT_SECONDS)
+      ),
+    };
+  }
+
+  if (type === "image") {
+    const imageSource = data.imageSource ?? (data.imageAssetId ? "upload" : "url");
+    return { ...data, imageSource };
+  }
+
+  if (type === "delay") {
+    return {
+      ...data,
+      delaySeconds: Math.max(1, Math.min(300, Number(data.delaySeconds ?? 1) || 1)),
+    };
+  }
+
+  return { ...data };
+}
+
+export function normalizeFlowDefinition(flowData: FlowDefinition): FlowDefinition {
+  const nodes = Array.isArray(flowData?.nodes) ? flowData.nodes : [];
+  const edges = Array.isArray(flowData?.edges) ? flowData.edges : [];
+
+  return {
+    nodes: nodes
+      .filter((node): node is FlowNode => Boolean(node?.id && node?.type && isAllowedNodeType(node.type)))
+      .map((node) => ({
+        ...node,
+        data: normalizeFlowNodeData(node.type, node.data ?? {}),
+      })),
+    edges: edges.filter((edge): edge is FlowEdge => Boolean(edge?.id && edge?.source && edge?.target)),
+  };
+}
+
+function parseStoredFlowDefinition(rawFlowData: string): FlowDefinition {
+  const parsed = JSON.parse(rawFlowData) as FlowDefinition;
+  return normalizeFlowDefinition(parsed);
+}
+
+export function validateFlowDefinition(flowData: FlowDefinition): void {
+  if (!flowData?.nodes?.length) throw new ServiceError("Flow must have at least one node", 400);
+  if (!Array.isArray(flowData.edges)) throw new ServiceError("Flow edges must be an array", 400);
+
+  const nodeIds = new Set<string>();
+  for (const node of flowData.nodes) {
+    if (!node.id?.trim()) throw new ServiceError("Each node must have an id", 400);
+    if (!isAllowedNodeType(node.type)) throw new ServiceError(`Unsupported node type: ${String(node.type)}`, 400);
+    if (nodeIds.has(node.id)) throw new ServiceError(`Duplicate node id: ${node.id}`, 400);
+    nodeIds.add(node.id);
+  }
+
+  for (const edge of flowData.edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
+      throw new ServiceError("Flow contains edge(s) that point to missing nodes", 400);
+    }
+  }
+
+  if (!flowData.nodes.some((node) => node.type === "trigger")) {
+    throw new ServiceError("Flow must include at least one Trigger node", 400);
+  }
+
+  for (const node of flowData.nodes) {
+    if (node.type === "trigger") {
+      const triggerMode = node.data.triggerMode ?? "keyword";
+      if (!["keyword", "everyMessage", "inactivitySession"].includes(triggerMode)) {
+        throw new ServiceError("Invalid trigger mode", 400);
+      }
+      if (triggerMode === "keyword" && !node.data.keyword?.trim()) {
+        throw new ServiceError("Keyword trigger requires a keyword", 400);
+      }
+      if (triggerMode === "inactivitySession") {
+        const inactivitySeconds = Number(node.data.inactivitySeconds ?? INACTIVITY_DEFAULT_SECONDS);
+        if (!Number.isFinite(inactivitySeconds) || inactivitySeconds < INACTIVITY_MIN_SECONDS || inactivitySeconds > INACTIVITY_MAX_SECONDS) {
+          throw new ServiceError("Inactivity window must be between 1 minute and 30 days", 400);
+        }
+      }
+    }
+
+    if (node.type === "image") {
+      const source = node.data.imageSource ?? "url";
+      if (source === "url") {
+        if (!node.data.imageUrl?.trim()) {
+          throw new ServiceError("Image node requires an image URL", 400);
+        }
+      } else if (source === "upload") {
+        if (!node.data.imageAssetId?.trim()) {
+          throw new ServiceError("Uploaded image node requires an image asset", 400);
+        }
+      } else {
+        throw new ServiceError("Invalid image source type", 400);
+      }
+    }
+
+    if (node.type === "delay") {
+      const delaySeconds = Number(node.data.delaySeconds ?? 1);
+      if (!Number.isFinite(delaySeconds) || delaySeconds < 1 || delaySeconds > 300) {
+        throw new ServiceError("Delay must be between 1 and 300 seconds", 400);
+      }
+    }
+  }
+}
+
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 export async function getFlows(userId: string): Promise<ChatbotFlow[]> {
@@ -99,7 +241,7 @@ export async function getFlows(userId: string): Promise<ChatbotFlow[]> {
     id: r.id,
     name: r.name,
     description: r.description,
-    flowData: JSON.parse(r.flowData) as FlowDefinition,
+    flowData: parseStoredFlowDefinition(r.flowData),
     enabled: r.enabled,
     priority: r.priority,
   }));
@@ -116,7 +258,7 @@ export async function getFlow(userId: string, id: string): Promise<ChatbotFlow> 
     id: row.id,
     name: row.name,
     description: row.description,
-    flowData: JSON.parse(row.flowData) as FlowDefinition,
+    flowData: parseStoredFlowDefinition(row.flowData),
     enabled: row.enabled,
     priority: row.priority,
   };
@@ -126,13 +268,16 @@ export async function createFlow(
   userId: string,
   data: { name: string; description?: string; flowData: FlowDefinition; priority?: number }
 ): Promise<ChatbotFlow> {
+  const normalizedFlowData = normalizeFlowDefinition(data.flowData);
+  validateFlowDefinition(normalizedFlowData);
+
   const now = new Date();
   const id = crypto.randomUUID();
   const flow: ChatbotFlow = {
     id,
     name: data.name,
     description: data.description ?? null,
-    flowData: data.flowData,
+    flowData: normalizedFlowData,
     enabled: true,
     priority: data.priority ?? 0,
   };
@@ -142,7 +287,7 @@ export async function createFlow(
     userId,
     name: data.name,
     description: data.description ?? null,
-    flowData: JSON.stringify(data.flowData),
+    flowData: JSON.stringify(normalizedFlowData),
     enabled: true,
     priority: data.priority ?? 0,
     createdAt: now,
@@ -162,7 +307,11 @@ export async function updateFlow(
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (data.name !== undefined) updates.name = data.name;
   if (data.description !== undefined) updates.description = data.description;
-  if (data.flowData !== undefined) updates.flowData = JSON.stringify(data.flowData);
+  const normalizedFlowData = data.flowData !== undefined ? normalizeFlowDefinition(data.flowData) : undefined;
+  if (normalizedFlowData !== undefined) {
+    validateFlowDefinition(normalizedFlowData);
+    updates.flowData = JSON.stringify(normalizedFlowData);
+  }
   if (data.enabled !== undefined) updates.enabled = data.enabled;
   if (data.priority !== undefined) updates.priority = data.priority;
 
@@ -171,6 +320,7 @@ export async function updateFlow(
   return {
     ...existing,
     ...data,
+    ...(normalizedFlowData ? { flowData: normalizedFlowData } : {}),
   };
 }
 
@@ -180,7 +330,116 @@ export async function deleteFlow(userId: string, id: string): Promise<void> {
     .from(chatbotFlow)
     .where(and(eq(chatbotFlow.id, id), eq(chatbotFlow.userId, userId)));
   if (!existing) throw new ServiceError("Flow not found", 404);
+  await db
+    .delete(flowTriggerState)
+    .where(and(eq(flowTriggerState.userId, userId), eq(flowTriggerState.flowId, id)));
   await db.delete(chatbotFlow).where(eq(chatbotFlow.id, id));
+}
+
+function sanitizeUserPathSegment(userId: string): string {
+  return userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function getUserImageDirectory(userId: string): string {
+  return path.join(IMAGE_STORAGE_ROOT, sanitizeUserPathSegment(userId));
+}
+
+function getImageAssetPath(userId: string, assetId: string): string {
+  return path.join(getUserImageDirectory(userId), assetId);
+}
+
+function guessExtFromMimeType(mimeType: string): string | null {
+  switch (mimeType) {
+    case "image/jpeg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/webp":
+      return ".webp";
+    case "image/gif":
+      return ".gif";
+    default:
+      return null;
+  }
+}
+
+function getMimeTypeFromExt(ext: string): string {
+  switch (ext.toLowerCase()) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".webp":
+      return "image/webp";
+    case ".gif":
+      return "image/gif";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function toFlowImageUrl(assetId: string): string {
+  return `/api/whatsapp/flows/images/${encodeURIComponent(assetId)}`;
+}
+
+export async function uploadFlowImage(
+  userId: string,
+  file: { type?: string; name?: string; size?: number; arrayBuffer: () => Promise<ArrayBuffer> }
+): Promise<UploadedFlowImage> {
+  const mimeType = String(file.type ?? "").toLowerCase();
+  if (!mimeType.startsWith("image/")) {
+    throw new ServiceError("Only image files are allowed", 400);
+  }
+  const ext = guessExtFromMimeType(mimeType);
+  if (!ext) {
+    throw new ServiceError("Only JPG, PNG, GIF and WEBP are supported", 400);
+  }
+  const size = Number(file.size ?? 0);
+  if (!Number.isFinite(size) || size <= 0) {
+    throw new ServiceError("Image file is empty", 400);
+  }
+  if (size > IMAGE_UPLOAD_MAX_BYTES) {
+    throw new ServiceError("Image exceeds 5 MB limit", 400);
+  }
+
+  const assetId = `${Date.now()}_${crypto.randomUUID()}${ext}`;
+  const userDir = getUserImageDirectory(userId);
+  const assetPath = getImageAssetPath(userId, assetId);
+  await mkdir(userDir, { recursive: true });
+  const content = Buffer.from(await file.arrayBuffer());
+  await writeFile(assetPath, content);
+
+  return {
+    assetId,
+    imageUrl: toFlowImageUrl(assetId),
+    fileName: file.name || `image${ext}`,
+    mimeType,
+    size,
+  };
+}
+
+export async function getFlowImageAsset(
+  userId: string,
+  assetId: string
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  const normalizedAssetId = assetId.trim();
+  if (
+    !normalizedAssetId ||
+    normalizedAssetId.includes("..") ||
+    normalizedAssetId.includes("/") ||
+    normalizedAssetId.includes("\\") ||
+    !/^[a-zA-Z0-9._-]+$/.test(normalizedAssetId)
+  ) {
+    throw new ServiceError("Invalid image asset id", 400);
+  }
+  const assetPath = getImageAssetPath(userId, normalizedAssetId);
+  if (!existsSync(assetPath)) {
+    throw new ServiceError("Image asset not found", 404);
+  }
+  const buffer = await readFile(assetPath);
+  const mimeType = getMimeTypeFromExt(path.extname(assetPath));
+  return { buffer, mimeType };
 }
 
 // ─── Flow Execution Engine ────────────────────────────────────────────────────
@@ -230,21 +489,32 @@ setInterval(() => {
 export async function executeFlows(
   userId: string,
   jid: string,
-  text: string
+  text: string,
+  options?: { receivedAt?: Date }
 ): Promise<boolean> {
   // Check pending button replies first (highest priority)
   const buttonHandled = await handleButtonReply(userId, jid, text);
   if (buttonHandled) return true;
 
+  const receivedAt = options?.receivedAt ?? new Date();
   const flows = await getFlows(userId);
   const enabledFlows = flows.filter((f) => f.enabled);
+  const contactId = jidToContactId(jid);
 
   for (const flow of enabledFlows) {
     const triggerNodes = flow.flowData.nodes.filter((n) => n.type === "trigger");
 
     for (const trigger of triggerNodes) {
-      if (matchesTrigger(trigger, text)) {
-        const contactId = jidToContactId(jid);
+      const matched = await matchesTrigger({
+        userId,
+        flowId: flow.id,
+        trigger,
+        contactPhone: contactId,
+        text,
+        receivedAt,
+      });
+
+      if (matched) {
         const phone = await resolvePhoneNumber(userId, jid);
         const ctx: ExecutionContext = {
           userId,
@@ -260,6 +530,7 @@ export async function executeFlows(
             userId,
             flowId: flow.id,
             flowName: flow.name,
+            triggerMode: trigger.data.triggerMode ?? "keyword",
             trigger: trigger.data.keyword,
           });
         } catch (e) {
@@ -332,7 +603,16 @@ export async function handleButtonReply(
   return true;
 }
 
-function matchesTrigger(trigger: FlowNode, text: string): boolean {
+interface TriggerMatchArgs {
+  userId: string;
+  flowId: string;
+  trigger: FlowNode;
+  contactPhone: string;
+  text: string;
+  receivedAt: Date;
+}
+
+function matchesKeywordTrigger(trigger: FlowNode, text: string): boolean {
   const keyword = trigger.data.keyword?.toLowerCase() ?? "";
   if (!keyword) return false; // skip empty triggers
   const t = text.toLowerCase();
@@ -353,6 +633,93 @@ function matchesTrigger(trigger: FlowNode, text: string): boolean {
       }
     default:
       return false;
+  }
+}
+
+async function matchesInactivitySessionTrigger(args: {
+  userId: string;
+  flowId: string;
+  triggerNodeId: string;
+  contactPhone: string;
+  inactivitySeconds: number;
+  receivedAt: Date;
+}): Promise<boolean> {
+  const [state] = await db
+    .select()
+    .from(flowTriggerState)
+    .where(
+      and(
+        eq(flowTriggerState.userId, args.userId),
+        eq(flowTriggerState.flowId, args.flowId),
+        eq(flowTriggerState.triggerNodeId, args.triggerNodeId),
+        eq(flowTriggerState.contactPhone, args.contactPhone)
+      )
+    );
+
+  const now = args.receivedAt;
+  const inactivityMs = args.inactivitySeconds * 1000;
+  let shouldTrigger = true;
+  let isSessionActive = true;
+
+  if (state) {
+    const gapMs = now.getTime() - state.lastMessageAt.getTime();
+    const isInactiveGap = gapMs > inactivityMs;
+    shouldTrigger = isInactiveGap;
+    isSessionActive = !isInactiveGap;
+  }
+
+  await db
+    .insert(flowTriggerState)
+    .values({
+      id: state?.id ?? crypto.randomUUID(),
+      userId: args.userId,
+      flowId: args.flowId,
+      triggerNodeId: args.triggerNodeId,
+      contactPhone: args.contactPhone,
+      lastMessageAt: now,
+      sessionActive: isSessionActive,
+      createdAt: state?.createdAt ?? now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        flowTriggerState.userId,
+        flowTriggerState.flowId,
+        flowTriggerState.triggerNodeId,
+        flowTriggerState.contactPhone,
+      ],
+      set: {
+        lastMessageAt: now,
+        sessionActive: isSessionActive,
+        updatedAt: now,
+      },
+    });
+
+  return shouldTrigger;
+}
+
+async function matchesTrigger(args: TriggerMatchArgs): Promise<boolean> {
+  const triggerMode = args.trigger.data.triggerMode ?? "keyword";
+  switch (triggerMode) {
+    case "everyMessage":
+      return true;
+    case "inactivitySession": {
+      const inactivitySeconds = Math.max(
+        INACTIVITY_MIN_SECONDS,
+        Math.min(INACTIVITY_MAX_SECONDS, args.trigger.data.inactivitySeconds ?? INACTIVITY_DEFAULT_SECONDS)
+      );
+      return matchesInactivitySessionTrigger({
+        userId: args.userId,
+        flowId: args.flowId,
+        triggerNodeId: args.trigger.id,
+        contactPhone: args.contactPhone,
+        inactivitySeconds,
+        receivedAt: args.receivedAt,
+      });
+    }
+    case "keyword":
+    default:
+      return matchesKeywordTrigger(args.trigger, args.text);
   }
 }
 
@@ -414,6 +781,15 @@ async function executeFromNode(
           createdAt: new Date(),
         });
       }
+      const nextNodes = getNextNodes(flow, nodeId);
+      for (const next of nextNodes) {
+        await executeFromNode(flow, next.id, ctx, visited);
+      }
+      break;
+    }
+
+    case "image": {
+      await sendImageMessage(ctx, node.data);
       const nextNodes = getNextNodes(flow, nodeId);
       for (const next of nextNodes) {
         await executeFromNode(flow, next.id, ctx, visited);
@@ -670,6 +1046,39 @@ async function sendInteractiveMessage(
   await sock.relayMessage(jid, fullMsg.message!, {
     messageId: fullMsg.key.id!,
     additionalNodes,
+  });
+}
+
+async function sendImageMessage(ctx: ExecutionContext, data: FlowNodeData): Promise<void> {
+  const socket = getSocketFor(ctx.userId);
+  const source = data.imageSource ?? (data.imageAssetId ? "upload" : "url");
+  const caption = data.imageCaption ? interpolateFlowVars(data.imageCaption, ctx) : undefined;
+
+  if (source === "upload") {
+    const assetId = data.imageAssetId?.trim();
+    if (!assetId) return;
+    const { buffer } = await getFlowImageAsset(ctx.userId, assetId);
+    await socket.sendMessage(ctx.jid, {
+      image: buffer,
+      ...(caption ? { caption } : {}),
+    });
+  } else {
+    const imageUrl = interpolateFlowVars(data.imageUrl ?? "", ctx).trim();
+    if (!imageUrl) return;
+    await socket.sendMessage(ctx.jid, {
+      image: { url: imageUrl },
+      ...(caption ? { caption } : {}),
+    });
+  }
+
+  await db.insert(messageLog).values({
+    id: crypto.randomUUID(),
+    userId: ctx.userId,
+    type: "flow",
+    phone: ctx.senderPhone,
+    message: `[Image] ${caption || data.imageFileName || data.imageUrl || "Sent image"}`,
+    status: "sent",
+    createdAt: new Date(),
   });
 }
 

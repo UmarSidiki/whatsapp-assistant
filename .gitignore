@@ -37,3 +37,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # SQLite databases & WhatsApp auth state
 *.db
 wa-auth/
+
+# Cursor IDE debug files
+.cursor/

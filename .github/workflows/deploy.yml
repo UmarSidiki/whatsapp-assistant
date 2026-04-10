@@ -21,24 +21,30 @@ jobs:
           port: 22
           script_stop: true
           script: |
-            # 1. Load Bun into the path
-            export BUN_INSTALL="$HOME/.bun"
-            export PATH="$BUN_INSTALL/bin:$PATH"
+            # 1. Load fnm and Node into the path
+            export PATH="$HOME/.local/share/fnm:$PATH"
+            eval "$(fnm env --shell bash)"
 
             cd /var/www/whatsapp-assistant
 
-            # 2. Stop the service
+            # 2. Stop the service (or use PM2 if you switched)
             sudo systemctl stop whatsapp-assistant
 
             # 3. Update code
             git pull origin main
 
-            # 4. Install dependencies and Build using Bun
-            export NODE_ENV=development
-            bun install --frozen-lockfile
-            bun run db:migrate
-            bun run db:push
-            bun run build
+            # 4. Install dependencies and Build using Node
+            export NODE_ENV=production
+            
+            # --omit=dev keeps it light on your VPS by skipping test tools
+            npm install --omit=dev
+            
+            # If your migrations/build require devDependencies, use:
+            # npm install && npm run build && npm prune --production
+
+            npm run db:migrate
+            npm run db:push
+            npm run build
 
             # 5. Restart the service
             sudo systemctl restart whatsapp-assistant

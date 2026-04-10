@@ -170,7 +170,7 @@ export function FlowBuilderTab({ apiUrl }: { apiUrl: string }) {
         </div>
 
         {/* Canvas */}
-        <FlowCanvas initialData={flowData} onChange={onFlowDataChange} />
+        <FlowCanvas apiUrl={apiUrl} initialData={flowData} onChange={onFlowDataChange} />
       </div>
     );
   }
@@ -183,8 +183,9 @@ export function FlowBuilderTab({ apiUrl }: { apiUrl: string }) {
             <div>
               <CardTitle>Chatbot Flows</CardTitle>
               <CardDescription>
-                Create custom auto-reply logic with a visual drag-and-drop builder.
-                Flows are checked before auto-reply rules. First matching flow wins.
+                Build professional WhatsApp automations with visual triggers, conditions, messages,
+                image delivery, and CTA actions. Flows are checked before auto-reply rules, and
+                the first matching flow executes.
               </CardDescription>
             </div>
             <Button onClick={handleNew}>
