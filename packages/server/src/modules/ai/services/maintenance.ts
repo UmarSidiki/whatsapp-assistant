@@ -1,6 +1,6 @@
 import { desc, eq, max, sql } from "drizzle-orm";
 import { db } from "../../../database";
-import { aiChatHistory, aiPersona } from "../../../database";
+import { waChatMessage, aiPersona } from "../../../database";
 import { logger } from "../../../core/logger";
 import { trimMessageHistoryForContact, isSystemContactId } from "./assistant";
 import { getAllSessions, toJid } from "../../whatsapp/services";
@@ -14,18 +14,22 @@ let maintenanceInProgress = false;
 async function getTopContactsByRecency(userId: string, limitCount: number): Promise<string[]> {
   const rows = await db
     .select({
-      contactPhone: aiChatHistory.contactPhone,
-      lastTs: max(aiChatHistory.timestamp),
+      contactPhone: waChatMessage.contactPhone,
+      lastTs: max(waChatMessage.timestamp),
     })
-    .from(aiChatHistory)
-    .where(eq(aiChatHistory.userId, userId))
-    .groupBy(aiChatHistory.contactPhone)
-    .orderBy(desc(max(aiChatHistory.timestamp)))
+    .from(waChatMessage)
+    .where(sql`
+      ${waChatMessage.userId} = ${userId}
+      AND ${waChatMessage.chatType} = 'direct'
+      AND ${waChatMessage.contactPhone} IS NOT NULL
+    `)
+    .groupBy(waChatMessage.contactPhone)
+    .orderBy(desc(max(waChatMessage.timestamp)))
     .limit(limitCount);
 
   return rows
     .map((row) => row.contactPhone)
-    .filter((contactPhone) => !isSystemContactId(contactPhone));
+    .filter((contactPhone): contactPhone is string => Boolean(contactPhone) && !isSystemContactId(contactPhone));
 }
 
 async function pruneUnusedChatsForUser(userId: string, topContacts: string[]): Promise<void> {
@@ -34,11 +38,6 @@ async function pruneUnusedChatsForUser(userId: string, topContacts: string[]): P
   }
 
   const placeholders = sql.join(topContacts.map((contact) => sql`${contact}`), sql`, `);
-
-  await db.delete(aiChatHistory).where(sql`
-    ${aiChatHistory.userId} = ${userId}
-    AND ${aiChatHistory.contactPhone} NOT IN (${placeholders})
-  `);
 
   await db.delete(aiPersona).where(sql`
     ${aiPersona.userId} = ${userId}
@@ -83,8 +82,9 @@ async function refreshTopContactData(userId: string, topContacts: string[]): Pro
 
 async function getUsersWithAIHistory(): Promise<string[]> {
   const historyUsers = await db
-    .selectDistinct({ userId: aiChatHistory.userId })
-    .from(aiChatHistory);
+    .selectDistinct({ userId: waChatMessage.userId })
+    .from(waChatMessage)
+    .where(eq(waChatMessage.chatType, "direct"));
 
   const users = new Set<string>();
   for (const row of historyUsers) {

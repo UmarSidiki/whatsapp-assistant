@@ -1,6 +1,6 @@
 import { eq, and, desc } from "drizzle-orm";
 import { db } from "../../../database";
-import { aiPersona, aiChatHistory } from "../../../database";
+import { aiPersona } from "../../../database";
 import { getMessageHistory } from "./assistant";
 import { logger } from "../../../core/logger";
 import { normalizeContactId } from "../../whatsapp/services";
@@ -386,7 +386,7 @@ function detectEmotionalTone(userMessages: string[], contactMessages: string[]):
 export async function extractPersona(
   userId: string,
   contactPhone: string,
-  limit: number = 100
+  limit: number = 1000
 ): Promise<Persona> {
   try {
     logger.info("Extracting user persona for contact", { userId, contactPhone, limit });
@@ -578,6 +578,39 @@ export async function getPersona(
       error: String(e),
       userId,
       contactPhone,
+    });
+    return null;
+  }
+}
+
+/**
+ * Return the last persona refresh timestamp for a contact, regardless of cache age.
+ */
+export async function getPersonaLastUpdated(
+  userId: string,
+  contactPhone: string
+): Promise<Date | null> {
+  try {
+    const normalizedPhone = normalizeContactId(contactPhone);
+    if (!normalizedPhone) return null;
+
+    const [row] = await db
+      .select({ lastUpdated: aiPersona.lastUpdated })
+      .from(aiPersona)
+      .where(
+        and(
+          eq(aiPersona.userId, userId),
+          eq(aiPersona.contactPhone, normalizedPhone)
+        )
+      )
+      .limit(1);
+
+    return row?.lastUpdated ?? null;
+  } catch (e) {
+    logger.warn("Failed to read persona lastUpdated", {
+      userId,
+      contactPhone,
+      error: String(e),
     });
     return null;
   }

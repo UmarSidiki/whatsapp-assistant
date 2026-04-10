@@ -1,6 +1,6 @@
-import { eq, and, desc, max } from "drizzle-orm";
+import { eq, and, desc, max, sql } from "drizzle-orm";
 import { db } from "../../../database";
-import { aiSettings, aiPersona, aiChatHistory } from "../../../database";
+import { aiSettings, aiPersona, waChatMessage } from "../../../database";
 import { logger } from "../../../core/logger";
 import { normalizeContactId, getContactName } from "../../whatsapp/services";
 
@@ -417,13 +417,19 @@ async function getMimicStatusMessage(userId: string): Promise<string> {
     // Get top 20 contacts by most recent message
     const topContacts = await db
       .select({
-        contactPhone: aiChatHistory.contactPhone,
-        lastTs: max(aiChatHistory.timestamp),
+        contactPhone: waChatMessage.contactPhone,
+        lastTs: max(waChatMessage.timestamp),
       })
-      .from(aiChatHistory)
-      .where(eq(aiChatHistory.userId, userId))
-      .groupBy(aiChatHistory.contactPhone)
-      .orderBy(desc(max(aiChatHistory.timestamp)))
+      .from(waChatMessage)
+      .where(
+        and(
+          eq(waChatMessage.userId, userId),
+          eq(waChatMessage.chatType, "direct"),
+          sql`${waChatMessage.contactPhone} IS NOT NULL`
+        )
+      )
+      .groupBy(waChatMessage.contactPhone)
+      .orderBy(desc(max(waChatMessage.timestamp)))
       .limit(20);
 
     if (topContacts.length === 0) {
@@ -441,6 +447,7 @@ async function getMimicStatusMessage(userId: string): Promise<string> {
 
     // Get mimic status for each contact with proper names
     const contactStatuses = topContacts
+      .filter((c): c is typeof c & { contactPhone: string } => Boolean(c.contactPhone))
       .map((c) => {
         const contactName = getContactName(userId, c.contactPhone);
         const mimicEnabled = isMimicEnabledForContact(userId, c.contactPhone, settings?.aiEnabled ?? true);

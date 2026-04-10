@@ -8,7 +8,7 @@ import { setMimicEnabledForContact, isMimicEnabledForContact } from "../../messa
 import { getContactName } from "../../whatsapp/services";
 import * as apiUsageService from "../services";
 import { db } from "../../../database";
-import { aiSettings, apiKeys, aiChatHistory, aiPersona } from "../../../database";
+import { aiSettings, apiKeys, waChatMessage, aiPersona } from "../../../database";
 import { and, eq, sql, desc } from "drizzle-orm";
 import { logger } from "../../../core/logger";
 import { auth } from "../../../core/auth";
@@ -307,7 +307,7 @@ export async function refreshPersona(c: Context) {
 
       // Step 2: enrich with AI-generated voice description (best-effort)
       try {
-        const history = await aiAssistantService.getMessageHistory(userId, contactPhone, 100);
+        const history = await aiAssistantService.getMessageHistory(userId, contactPhone, 1000);
         const aiDescription = await aiResponseService.generatePersonaAIDescription(
           userId,
           contactPhone,
@@ -344,7 +344,7 @@ export async function refreshPersona(c: Context) {
 /**
  * GET /api/ai/history/:contactPhone
  * Get message history for a contact
- * Query params: limit=50 (optional, max 500)
+ * Query params: limit=50 (optional, max 1000)
  * Response: { messages: Array<{message, sender, timestamp}> }
  */
 export async function getHistory(c: Context) {
@@ -367,7 +367,7 @@ export async function getHistory(c: Context) {
       if (isNaN(parsed) || parsed < 1) {
         throw new ProviderError("Invalid limit: must be a positive integer", 400);
       }
-      limit = Math.min(parsed, 500); // Cap at 500
+      limit = Math.min(parsed, 1000); // Cap at 1000
     }
 
     try {
@@ -676,18 +676,27 @@ export async function getContacts(c: Context) {
       // Get top 20 contacts by message count and recency, grouped with stats
       const msgStats = await db
         .select({
-          contactPhone: aiChatHistory.contactPhone,
+          contactPhone: waChatMessage.contactPhone,
           count: sql<number>`count(*)`,
-          lastTs: sql<Date | null>`max(${aiChatHistory.timestamp})`,
+          lastTs: sql<Date | null>`max(${waChatMessage.timestamp})`,
         })
-        .from(aiChatHistory)
-        .where(eq(aiChatHistory.userId, userId))
-        .groupBy(aiChatHistory.contactPhone)
-        .orderBy(desc(sql<Date>`max(${aiChatHistory.timestamp})`))
+        .from(waChatMessage)
+        .where(
+          and(
+            eq(waChatMessage.userId, userId),
+            eq(waChatMessage.chatType, "direct"),
+            sql`${waChatMessage.contactPhone} IS NOT NULL`
+          )
+        )
+        .groupBy(waChatMessage.contactPhone)
+        .orderBy(desc(sql<Date>`max(${waChatMessage.timestamp})`))
         .limit(20);
 
       const validMsgStats = msgStats.filter(
-        (stat) => !aiAssistantService.isSystemContactId(stat.contactPhone)
+        (stat): stat is typeof stat & { contactPhone: string } => {
+          const phone = stat.contactPhone;
+          return typeof phone === "string" && phone.length > 0 && !aiAssistantService.isSystemContactId(phone);
+        }
       );
 
       // Get persona lastUpdated for these top contacts
@@ -828,7 +837,7 @@ export async function refreshAllPersonas(c: Context) {
 
           // Enrich with AI description (best-effort)
           try {
-            const history = await aiAssistantService.getMessageHistory(userId, phone, 100);
+            const history = await aiAssistantService.getMessageHistory(userId, phone, 1000);
             const aiDescription = await aiResponseService.generatePersonaAIDescription(
               userId,
               phone,

@@ -1,6 +1,7 @@
-import { eq, and, desc, sql, max } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { eq, and, desc, sql, max, gt } from "drizzle-orm";
 import { db } from "../../../database";
-import { aiChatHistory } from "../../../database";
+import { waChatMessage } from "../../../database";
 import { logger } from "../../../core/logger";
 import { normalizeContactId } from "../../whatsapp/services";
 
@@ -12,7 +13,7 @@ export interface MessageHistoryItem {
   timestamp: Date;
 }
 
-const MAX_MESSAGES_PER_CONTACT = 500;
+const MAX_MESSAGES_PER_CONTACT = 1000;
 const SYSTEM_CONTACT_IDS = new Set(["me", "contact", "ai", "assistant", "user"]);
 
 interface StoreMessageOptions {
@@ -21,6 +22,20 @@ interface StoreMessageOptions {
 
 function normalizeStoredSender(sender: string): "me" | "contact" {
   return sender === "me" ? "me" : "contact";
+}
+
+function toDirectJid(contactPhone: string): string {
+  return `${contactPhone}@s.whatsapp.net`;
+}
+
+function buildAssistantDedupeKey(input: {
+  chatId: string;
+  sender: "me" | "contact";
+  timestamp: Date;
+  message: string;
+}): string {
+  const fingerprint = `${input.chatId}|${input.sender}|${input.timestamp.toISOString()}|${input.message}`;
+  return `assistant:${createHash("sha1").update(fingerprint).digest("hex")}`;
 }
 
 /**
@@ -65,15 +80,35 @@ export async function storeMessage(
   }
 
   try {
-    await db.insert(aiChatHistory).values({
-      id: crypto.randomUUID(),
-      userId,
-      contactPhone: normalizedPhone,
-      message: message.trim(),
+    const ts = timestamp ?? new Date();
+    const chatId = toDirectJid(normalizedPhone);
+    const dedupeKey = buildAssistantDedupeKey({
+      chatId,
       sender,
-      isOutgoing: sender === "me",
-      timestamp: timestamp ?? new Date(),
+      timestamp: ts,
+      message: message.trim(),
     });
+
+    await db
+      .insert(waChatMessage)
+      .values({
+        id: crypto.randomUUID(),
+        userId,
+        chatId,
+        chatType: "direct",
+        contactPhone: normalizedPhone,
+        title: normalizedPhone,
+        message: message.trim(),
+        sender,
+        waMessageId: null,
+        dedupeKey,
+        source: "api",
+        timestamp: ts,
+        createdAt: new Date(),
+      })
+      .onConflictDoNothing({
+        target: [waChatMessage.userId, waChatMessage.dedupeKey],
+      });
   } catch (e) {
     logger.warn("AI assistant: Failed to store message", {
       error: String(e),
@@ -103,13 +138,15 @@ export async function trimMessageHistoryForContact(
   userId: string,
   contactPhone: string
 ): Promise<void> {
-  await db.delete(aiChatHistory).where(sql`
-    ${aiChatHistory.userId} = ${userId}
-    AND ${aiChatHistory.contactPhone} = ${contactPhone}
-    AND ${aiChatHistory.id} IN (
+  await db.delete(waChatMessage).where(sql`
+    ${waChatMessage.userId} = ${userId}
+    AND ${waChatMessage.chatType} = 'direct'
+    AND ${waChatMessage.contactPhone} = ${contactPhone}
+    AND ${waChatMessage.id} IN (
       SELECT id
-      FROM ai_chat_history
+      FROM wa_chat_message
       WHERE userId = ${userId}
+        AND "chatType" = 'direct'
         AND contactPhone = ${contactPhone}
       ORDER BY timestamp DESC, id DESC
       LIMIT -1 OFFSET ${MAX_MESSAGES_PER_CONTACT}
@@ -132,18 +169,19 @@ export async function getMessageHistory(
   try {
     const messages = await db
       .select({
-        message: aiChatHistory.message,
-        sender: aiChatHistory.sender,
-        timestamp: aiChatHistory.timestamp,
+        message: waChatMessage.message,
+        sender: waChatMessage.sender,
+        timestamp: waChatMessage.timestamp,
       })
-      .from(aiChatHistory)
+      .from(waChatMessage)
       .where(
         and(
-          eq(aiChatHistory.userId, userId),
-          eq(aiChatHistory.contactPhone, normalizedPhone)
+          eq(waChatMessage.userId, userId),
+          eq(waChatMessage.chatType, "direct"),
+          eq(waChatMessage.contactPhone, normalizedPhone)
         )
       )
-      .orderBy(desc(aiChatHistory.timestamp))
+      .orderBy(desc(waChatMessage.timestamp), desc(waChatMessage.id))
       .limit(limit_n);
 
     // Reverse to get chronological order
@@ -176,11 +214,12 @@ export async function getMessageCount(
   try {
     const result = await db
       .select({ count: sql<number>`COUNT(*)` })
-      .from(aiChatHistory)
+      .from(waChatMessage)
       .where(
         and(
-          eq(aiChatHistory.userId, userId),
-          eq(aiChatHistory.contactPhone, normalizedPhone)
+          eq(waChatMessage.userId, userId),
+          eq(waChatMessage.chatType, "direct"),
+          eq(waChatMessage.contactPhone, normalizedPhone)
         )
       );
 
@@ -196,6 +235,41 @@ export async function getMessageCount(
 }
 
 /**
+ * Count direct mutual messages for one contact since a given timestamp.
+ */
+export async function getMessageCountSince(
+  userId: string,
+  contactPhone: string,
+  since: Date
+): Promise<number> {
+  const normalizedPhone = normalizeContactId(contactPhone);
+
+  try {
+    const result = await db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(waChatMessage)
+      .where(
+        and(
+          eq(waChatMessage.userId, userId),
+          eq(waChatMessage.chatType, "direct"),
+          eq(waChatMessage.contactPhone, normalizedPhone),
+          gt(waChatMessage.timestamp, since)
+        )
+      );
+
+    return result[0]?.count || 0;
+  } catch (e) {
+    logger.error("AI assistant: Failed to get message count since timestamp", {
+      error: String(e),
+      userId,
+      contactPhone: normalizedPhone,
+      since: since.toISOString(),
+    });
+    return 0;
+  }
+}
+
+/**
  * Get all unique contacts for a user
  */
 export async function getContacts(userId: string): Promise<string[]> {
@@ -203,17 +277,23 @@ export async function getContacts(userId: string): Promise<string[]> {
     // Get top 20 contacts by most recent message
     const result = await db
       .select({
-        contactPhone: aiChatHistory.contactPhone,
+        contactPhone: waChatMessage.contactPhone,
       })
-      .from(aiChatHistory)
-      .where(eq(aiChatHistory.userId, userId))
-      .groupBy(aiChatHistory.contactPhone)
-      .orderBy(desc(max(aiChatHistory.timestamp)))
+      .from(waChatMessage)
+      .where(
+        and(
+          eq(waChatMessage.userId, userId),
+          eq(waChatMessage.chatType, "direct"),
+          sql`${waChatMessage.contactPhone} IS NOT NULL`
+        )
+      )
+      .groupBy(waChatMessage.contactPhone)
+      .orderBy(desc(max(waChatMessage.timestamp)))
       .limit(20);
 
     return result
       .map((r) => r.contactPhone)
-      .filter((contactPhone) => !isSystemContactId(contactPhone));
+      .filter((contactPhone): contactPhone is string => Boolean(contactPhone) && !isSystemContactId(contactPhone));
   } catch (e) {
     logger.error("AI assistant: Failed to retrieve contacts", {
       error: String(e),
@@ -241,7 +321,7 @@ export async function syncOldMessages(userId: string): Promise<number> {
 // ─── Cleanup ──────────────────────────────────────────────────────────────────
 
 /**
- * Cleanup old messages - keep only last 500 per contact
+ * Cleanup old messages - keep only last 1000 per contact
  */
 export async function cleanupOldMessages(userId: string): Promise<void> {
   try {

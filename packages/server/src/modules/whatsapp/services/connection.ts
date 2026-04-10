@@ -32,12 +32,6 @@ import {
 } from "./socket";
 import { handleAutoReply } from "../../auto-reply/services";
 import {
-  storeMessage,
-  trimMessageHistoryForContact,
-  getMessageCount,
-  getMessageHistory,
-} from "../../ai/services";
-import {
   parseCommand,
   executeCommand,
   isMimicEnabledForContact,
@@ -462,7 +456,6 @@ export async function init(userId: string): Promise<void> {
       });
 
       let stored = 0;
-      const touchedContacts = new Set<string>();
       const touchedChatIds = new Set<string>();
       const chatHistoryLimit = await getChatHistoryLimit(userId);
 
@@ -487,11 +480,6 @@ export async function init(userId: string): Promise<void> {
             if (!msg.key.fromMe && typeof msg.pushName === "string" && msg.pushName.trim()) {
               upsertContactName(userId, contactPhone, msg.pushName);
             }
-
-            if (text) {
-              await storeMessage(userId, contactPhone, text, sender, ts, { skipTrim: true });
-              touchedContacts.add(contactPhone);
-            }
           }
 
           const storedChat = await storeChatMessage(
@@ -504,7 +492,7 @@ export async function init(userId: string): Promise<void> {
               title: !msg.key.fromMe && typeof msg.pushName === "string" ? msg.pushName : undefined,
               waMessage: msg,
             },
-            { skipTrim: true, historyLimit: chatHistoryLimit }
+            { skipTrim: true, historyLimit: chatHistoryLimit, source: "history" }
           );
           if (storedChat) {
             touchedChatIds.add(storedChat.chatId);
@@ -533,22 +521,6 @@ export async function init(userId: string): Promise<void> {
         }
       }
 
-      const trimPromises: Array<Promise<void>> = [];
-      touchedContacts.forEach((contactPhone) => {
-        trimPromises.push((async () => {
-          try {
-            await trimMessageHistoryForContact(userId, contactPhone);
-          } catch (error) {
-            logger.warn("Failed to trim history after backfill", {
-              userId,
-              contactPhone,
-              error: String(error),
-            });
-          }
-        })());
-      });
-      await Promise.all(trimPromises);
-
       const chatTrimPromises: Array<Promise<void>> = [];
       touchedChatIds.forEach((chatId) => {
         chatTrimPromises.push(
@@ -566,7 +538,6 @@ export async function init(userId: string): Promise<void> {
       logger.info("[History Sync] Stored bulk history messages", {
         userId,
         storedCount: stored,
-        trimmedContacts: touchedContacts.size,
         trimmedChats: touchedChatIds.size,
       });
     });
@@ -608,16 +579,6 @@ export async function init(userId: string): Promise<void> {
             ? new Date(Number(msg.messageTimestamp) * 1000)
             : new Date();
 
-        if (isDirectChat && hasText) {
-          storeMessage(userId, contactPhone, text, sender, ts).catch((e) => {
-            logger.error("Failed to store message", {
-              userId,
-              contactPhone,
-              error: String(e),
-            });
-          });
-        }
-
         storeChatMessage(
           userId,
           {
@@ -630,6 +591,7 @@ export async function init(userId: string): Promise<void> {
           },
           {
             historyLimit: chatHistoryLimit,
+            source: type === "append" ? "history" : "realtime",
           }
         ).catch((error) => {
           logger.error("Failed to persist chat message", {

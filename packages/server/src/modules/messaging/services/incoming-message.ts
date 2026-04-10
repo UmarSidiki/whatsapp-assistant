@@ -5,17 +5,20 @@ import { eq } from "drizzle-orm";
 import { logger } from "../../../core/logger";
 import { parseCommand, executeCommand, isMimicEnabledForContact, type CommandResult } from "./handler";
 import { generateResponse, generatePersonaAIDescription } from "../../ai/services";
-import { getPersona, extractPersona, savePersona } from "../../ai/services";
+import { getPersona, extractPersona, savePersona, getPersonaLastUpdated } from "../../ai/services";
 import { bufferIncomingMessage, sendSegmented, sendSegments } from "./segment";
 import { addScheduledMessage } from "../../scheduling/services";
 import { db } from "../../../database";
 import { aiSettings, messageLog } from "../../../database";
 import { extractTextFromMessage, getContextInfoFromMessage, getSocketFor, toJid } from "../../whatsapp/services";
 import { handleAutoReply } from "../../auto-reply/services";
-import { getMessageCount, getMessageHistory } from "../../ai/services";
+import { getMessageCount, getMessageHistory, getMessageCountSince } from "../../ai/services";
 import { BACKFILL_TARGET_MESSAGES, hasRecentBackfillRequest, markBackfillRequested } from "../../whatsapp/services";
 const MEDIA_DOWNLOAD_COMMAND_LOGGER = pino({ level: "silent" });
 const MIN_MESSAGES_FOR_PERSONA = 5;
+const PERSONA_CONTEXT_WINDOW = 1000;
+const PERSONA_REFRESH_NEW_MESSAGES_THRESHOLD = 25;
+const PERSONA_FORCE_REFRESH_AGE_MS = 12 * 60 * 60 * 1000;
 
 interface ParsedReminderIntent {
   task: string;
@@ -554,13 +557,13 @@ export async function handleAIResponse(
       const backfillKey = `${userId}_${contactPhone}`;
       if (!hasRecentBackfillRequest(backfillKey)) {
         markBackfillRequested(backfillKey);
-        logger.info(`${tag} Requesting history backfill (have ${msgCount}, want 500)`, { userId });
+        logger.info(`${tag} Requesting history backfill (have ${msgCount}, want ${BACKFILL_TARGET_MESSAGES})`, { userId });
         try {
           const sock = getSocketFor(userId);
           // fetchMessageHistory is fire-and-forget; results arrive via messages.upsert/append
           // NOTE: This method may not exist in all Baileys versions - wrapped in try/catch
           await (sock as any).fetchMessageHistory(
-            500,
+            BACKFILL_TARGET_MESSAGES,
             { remoteJid: jid, fromMe: false, id: "" },
             0
           );
@@ -577,20 +580,39 @@ export async function handleAIResponse(
     // ── Step 3: Ensure persona exists (only for mimic mode) ───────────────
     if (aiMode === "mimic") {
       let persona = await getPersona(userId, contactPhone);
-      logger.info(`${tag} Step 3: Persona exists = ${!!persona}`, { userId });
+      const personaLastUpdated = await getPersonaLastUpdated(userId, contactPhone);
+      const nowMs = Date.now();
+      const freshCount = msgCount;
+      const newMessagesSinceRefresh = personaLastUpdated
+        ? await getMessageCountSince(userId, contactPhone, personaLastUpdated)
+        : freshCount;
+      const forceRefreshByAge =
+        personaLastUpdated != null && nowMs - personaLastUpdated.getTime() > PERSONA_FORCE_REFRESH_AGE_MS;
+      const shouldRefreshPersona =
+        !persona ||
+        forceRefreshByAge ||
+        newMessagesSinceRefresh >= PERSONA_REFRESH_NEW_MESSAGES_THRESHOLD;
 
-      if (!persona) {
-        const freshCount = await getMessageCount(userId, contactPhone);
+      logger.info(`${tag} Step 3: Persona refresh decision`, {
+        userId,
+        personaExists: Boolean(persona),
+        freshCount,
+        newMessagesSinceRefresh,
+        forceRefreshByAge,
+        shouldRefreshPersona,
+      });
+
+      if (shouldRefreshPersona) {
         if (freshCount >= MIN_MESSAGES_FOR_PERSONA) {
-          logger.info(`${tag} Generating persona from ${freshCount} messages`, { userId });
+          logger.info(`${tag} Generating persona from ${Math.min(freshCount, PERSONA_CONTEXT_WINDOW)} mutual messages`, { userId });
 
           // Rule-based extraction first (fast, always works)
-          persona = await extractPersona(userId, contactPhone, Math.min(freshCount, 500));
+          persona = await extractPersona(userId, contactPhone, Math.min(freshCount, PERSONA_CONTEXT_WINDOW));
 
           // Try to enrich with AI-generated voice description
           logger.info(`${tag} Generating AI persona description`, { userId });
           try {
-            const history = await getMessageHistory(userId, contactPhone, Math.min(freshCount, 100));
+            const history = await getMessageHistory(userId, contactPhone, Math.min(freshCount, PERSONA_CONTEXT_WINDOW));
             const aiDescription = await generatePersonaAIDescription(userId, contactPhone, history);
             if (aiDescription) {
               persona.aiDescription = aiDescription;

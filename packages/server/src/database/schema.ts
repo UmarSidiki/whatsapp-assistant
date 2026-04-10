@@ -163,6 +163,8 @@ export const messageLog = pgTable("message_log", {
   index("message_log_created_at_idx").on(t.createdAt),
   index("message_log_status_idx").on(t.status),
   index("message_log_user_idx").on(t.userId),
+  index("message_log_user_created_at_idx").on(t.userId, t.createdAt),
+  index("message_log_user_status_created_at_idx").on(t.userId, t.status, t.createdAt),
 ]);
 
 /** Persisted auto-reply rules (survive server restarts) */
@@ -192,6 +194,7 @@ export const scheduledMessage = pgTable("scheduled_message", {
   createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("scheduled_message_user_idx").on(t.userId),
+  index("scheduled_message_status_scheduled_at_idx").on(t.status, t.scheduledAt),
 ]);
 
 /** Message templates (saved server-side, not just localStorage) */
@@ -214,9 +217,16 @@ export const waChatMessage = pgTable("wa_chat_message", {
     .references(() => user.id),
   chatId: text("chatId").notNull(),
   chatType: text("chatType").$type<"direct" | "group" | "broadcast" | "channel">().notNull(),
+  /** Normalized contact id for direct chats (digits/normalized LID). */
+  contactPhone: text("contactPhone"),
   title: text("title"),
   message: text("message").notNull(),
   sender: text("sender").$type<"me" | "contact">().notNull(),
+  /** Provider message id (e.g. WhatsApp stanza id) when available. */
+  waMessageId: text("waMessageId"),
+  /** Deterministic idempotency key used to avoid duplicate inserts across retries/reconnects. */
+  dedupeKey: text("dedupeKey").notNull(),
+  source: text("source").$type<"history" | "realtime" | "api">().notNull().default("realtime"),
   timestamp: timestamp("timestamp", { withTimezone: true, mode: "date" }).notNull(),
   createdAt: timestamp("createdAt", { withTimezone: true, mode: "date" }).notNull(),
   /** When set, dashboard can re-download bytes via Baileys (JSON + BufferJSON). */
@@ -226,6 +236,8 @@ export const waChatMessage = pgTable("wa_chat_message", {
   index("wa_chat_message_user_type_ts_idx").on(t.userId, t.chatType, t.timestamp),
   index("wa_chat_message_user_chat_ts_idx").on(t.userId, t.chatId, t.timestamp),
   index("wa_chat_message_user_chat_idx").on(t.userId, t.chatId),
+  index("wa_chat_message_user_contact_ts_idx").on(t.userId, t.contactPhone, t.timestamp),
+  uniqueIndex("wa_chat_message_user_dedupe_idx").on(t.userId, t.dedupeKey),
 ]);
 
 /** Persistent chat list: stores every chat (direct/group) synced from WhatsApp. */
@@ -265,22 +277,6 @@ export const waChatSettings = pgTable("wa_chat_settings", {
 
 // ─── AI Assistant Tables ──────────────────────────────────────────────────────
 
-/** Store all messages per contact for AI context */
-export const aiChatHistory = pgTable("ai_chat_history", {
-  id: text("id").primaryKey(),
-  userId: text("userId")
-    .notNull()
-    .references(() => user.id),
-  contactPhone: text("contactPhone").notNull(),
-  message: text("message").notNull(),
-  sender: text("sender").$type<"me" | "contact">().notNull(),
-  isOutgoing: boolean("isOutgoing").notNull(),
-  timestamp: timestamp("timestamp", { withTimezone: true, mode: "date" }).notNull(),
-}, (t) => [
-  index("ai_chat_history_user_contact_timestamp_idx").on(t.userId, t.contactPhone, t.timestamp),
-  index("ai_chat_history_user_contact_idx").on(t.userId, t.contactPhone),
-]);
-
 /** Cached extracted persona per contact */
 export const aiPersona = pgTable("ai_persona", {
   id: text("id").primaryKey(),
@@ -292,6 +288,7 @@ export const aiPersona = pgTable("ai_persona", {
   lastUpdated: timestamp("lastUpdated", { withTimezone: true, mode: "date" }).notNull(),
 }, (t) => [
   index("ai_persona_user_contact_idx").on(t.userId, t.contactPhone),
+  uniqueIndex("ai_persona_user_contact_unique_idx").on(t.userId, t.contactPhone),
 ]);
 
 /** Global AI settings per user */

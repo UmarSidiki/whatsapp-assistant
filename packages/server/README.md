@@ -30,3 +30,15 @@ Start server:
 ```sh
 npm run start
 ```
+
+Run high-volume chat ingestion load test:
+
+```sh
+npm run loadtest:ingestion --workspace server -- --messages=100000 --chats=50 --batchSize=1000 --duplicateReplay=10000 --clear=true
+```
+
+Quick root command:
+
+```sh
+npm run loadtest:ingestion -- --messages=200000
+```

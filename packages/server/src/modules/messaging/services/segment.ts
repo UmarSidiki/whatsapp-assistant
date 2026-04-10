@@ -1,5 +1,6 @@
 import { logger } from "../../../core/logger";
 import { getSocketFor, toJid } from "../../whatsapp/services";
+import { storeChatMessage } from "../../whatsapp/services/chats";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -117,7 +118,31 @@ export async function sendSegmented(
     }
 
     // Send the segment
-    await socket.sendMessage(jid, { text: segments[i] });
+    const sentMessage = await socket.sendMessage(jid, { text: segments[i] });
+
+    // Backup persistence path for outbound messages.
+    // Real-time upsert should also persist this, and dedupeKey prevents duplicates.
+    storeChatMessage(
+      userId,
+      {
+        jid,
+        message: (sentMessage as any)?.message ?? ({ conversation: segments[i] } as any),
+        sender: "me",
+        timestamp: new Date(),
+        waMessage: sentMessage as any,
+        waMessageId: (sentMessage as any)?.key?.id ?? null,
+      },
+      {
+        skipTrim: true,
+        source: "api",
+      }
+    ).catch((error) => {
+      logger.debug("Segmented send backup persistence failed", {
+        userId,
+        jid,
+        error: String(error),
+      });
+    });
 
     // Clear typing indicator
     try {
@@ -162,7 +187,31 @@ export async function sendSegments(
       await sleep(rand(800, 2000));
     }
 
-    await socket.sendMessage(jid, { text: segments[i] });
+    const sentMessage = await socket.sendMessage(jid, { text: segments[i] });
+
+    // Backup persistence path for outbound messages.
+    // Real-time upsert should also persist this, and dedupeKey prevents duplicates.
+    storeChatMessage(
+      userId,
+      {
+        jid,
+        message: (sentMessage as any)?.message ?? ({ conversation: segments[i] } as any),
+        sender: "me",
+        timestamp: new Date(),
+        waMessage: sentMessage as any,
+        waMessageId: (sentMessage as any)?.key?.id ?? null,
+      },
+      {
+        skipTrim: true,
+        source: "api",
+      }
+    ).catch((error) => {
+      logger.debug("AI segments backup persistence failed", {
+        userId,
+        jid,
+        error: String(error),
+      });
+    });
 
     try {
       await socket.sendPresenceUpdate("paused", jid);

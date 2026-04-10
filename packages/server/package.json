@@ -6,7 +6,6 @@
     "dev": "node --watch --env-file=../../.env --import tsx src/index.ts",
     "build": "tsup src/index.ts --format esm --clean",
     "start": "node --env-file=../../.env --import tsx src/index.ts",
-    "ai-integration:test": "tsx ai-integration.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file=../../.env --import tsx src/database/migrate.ts",
     "db:studio": "drizzle-kit studio",

@@ -114,7 +114,7 @@ export function upsertContactNames(
 const backfilledContacts = new Map<string, number>();
 const BACKFILL_TTL_MS = 6 * 60 * 60 * 1000;
 const BACKFILL_MAX_ENTRIES = 4000;
-export const BACKFILL_TARGET_MESSAGES = 500;
+export const BACKFILL_TARGET_MESSAGES = 1000;
 
 export function pruneBackfillTracker(now: number = Date.now()): void {
   backfilledContacts.forEach((requestedAt, key) => {

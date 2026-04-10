@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { BufferJSON, downloadMediaMessage, type proto } from "@whiskeysockets/baileys";
+import { createHash } from "node:crypto";
 import { db, waChat, waChatMessage, waChatSettings } from "../../../database";
 import { logger } from "../../../core/logger";
 import { ServiceError } from "../types";
@@ -211,6 +212,24 @@ function toPersistedMessageText(message?: proto.IMessage | null): string | undef
   if (text) return text;
   if (!message) return undefined;
   return "[Media]";
+}
+
+function buildMessageDedupeKey(input: {
+  chatId: string;
+  waMessageId?: string | null;
+  sender: "me" | "contact";
+  timestamp: Date;
+  message: string;
+  mediaKind?: string | null;
+}): string {
+  const waMessageId = input.waMessageId?.trim();
+  if (waMessageId) {
+    return `wa:${input.chatId}:${waMessageId}`;
+  }
+
+  const fingerprint = `${input.chatId}|${input.sender}|${input.timestamp.toISOString()}|${input.message}|${input.mediaKind ?? ""}`;
+  const hash = createHash("sha1").update(fingerprint).digest("hex");
+  return `fp:${hash}`;
 }
 
 function mediaKindForMessage(message?: proto.IMessage | null): "image" | "video" | "audio" | "voice" | "document" | "sticker" | null {
@@ -519,11 +538,13 @@ export async function storeChatMessage(
     sender: "me" | "contact";
     timestamp: Date;
     title?: string;
+    waMessageId?: string | null;
     waMessage?: proto.IWebMessageInfo | null;
   },
   options?: {
     skipTrim?: boolean;
     historyLimit?: number;
+    source?: "history" | "realtime" | "api";
   }
 ): Promise<{ chatId: string; chatType: ChatType } | null> {
   const chatType = resolveChatTypeFromJid(input.jid);
@@ -540,25 +561,43 @@ export async function storeChatMessage(
     chatId;
 
   const waPayload = input.waMessage ? maybeSerializeWaDownloadPayload(input.waMessage) : null;
+  const waMessageId = input.waMessageId?.trim() || input.waMessage?.key?.id?.trim() || null;
+  const dedupeKey = buildMessageDedupeKey({
+    chatId,
+    waMessageId,
+    sender: input.sender,
+    timestamp: input.timestamp,
+    message: persistedMessage,
+    mediaKind: waPayload?.mediaKind ?? null,
+  });
 
   const baseRow = {
     id: crypto.randomUUID(),
     userId,
     chatId,
     chatType,
+    contactPhone: directContactId || null,
     title: derivedTitle,
     message: persistedMessage,
     sender: input.sender,
+    waMessageId,
+    dedupeKey,
+    source: options?.source ?? "realtime",
     timestamp: input.timestamp,
     createdAt: new Date(),
   };
 
   try {
-    await db.insert(waChatMessage).values({
-      ...baseRow,
-      waMessagePayload: waPayload?.payload,
-      mediaKind: waPayload?.mediaKind ?? null,
-    });
+    await db
+      .insert(waChatMessage)
+      .values({
+        ...baseRow,
+        waMessagePayload: waPayload?.payload,
+        mediaKind: waPayload?.mediaKind ?? null,
+      })
+      .onConflictDoNothing({
+        target: [waChatMessage.userId, waChatMessage.dedupeKey],
+      });
 
     if (!options?.skipTrim) {
       const historyLimit = options?.historyLimit ?? (await getChatHistoryLimit(userId));
@@ -670,25 +709,25 @@ export async function getChats(userId: string, scope: ChatScope = "direct"): Pro
       .orderBy(desc(sql<Date>`max(${waChatMessage.timestamp})`))
       .limit(200);
 
-    const latestRows = await Promise.all(
-      grouped.map(async (row) => {
-        const [latest] = await db
-          .select({
+    const chatIds = grouped.map((row) => row.chatId);
+    const latestPerChat = chatIds.length
+      ? await db
+          .selectDistinctOn([waChatMessage.chatId], {
+            chatId: waChatMessage.chatId,
             title: waChatMessage.title,
             message: waChatMessage.message,
             timestamp: waChatMessage.timestamp,
           })
           .from(waChatMessage)
-          .where(and(eq(waChatMessage.userId, userId), eq(waChatMessage.chatId, row.chatId)))
-          .orderBy(desc(waChatMessage.timestamp), desc(waChatMessage.id))
-          .limit(1);
+          .where(and(eq(waChatMessage.userId, userId), inArray(waChatMessage.chatId, chatIds)))
+          .orderBy(waChatMessage.chatId, desc(waChatMessage.timestamp), desc(waChatMessage.id))
+      : [];
 
-        return { row, latest };
-      })
-    );
+    const latestMap = new Map(latestPerChat.map((row) => [row.chatId, row]));
 
-    primary = latestRows
-      .map(({ row, latest }) => {
+    primary = grouped
+      .map((row) => {
+        const latest = latestMap.get(row.chatId);
         const chatType = row.chatType as ChatType;
         const lastMessageAt = row.lastMessageAt ? new Date(row.lastMessageAt).toISOString() : undefined;
 
