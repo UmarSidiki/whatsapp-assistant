@@ -13,6 +13,7 @@ import {
 } from "@whiskeysockets/baileys";
 import type { WAState, WAStatus } from "../types";
 import { ServiceError } from "../types";
+import { normalizeChatId } from "./chat-jid";
 
 // ─── Per-user session state ───────────────────────────────────────────────────
 
@@ -199,6 +200,93 @@ export function clearBackfillTrackerForUser(userId: string): void {
     }
   });
   keysToDelete.forEach((key) => backfilledContacts.delete(key));
+}
+
+// ─── On-Demand Chat History Tracking ─────────────────────────────────────────
+
+const historySyncRequests = new Map<string, number>();
+const HISTORY_SYNC_TTL_MS = 2 * 60 * 1000;
+const HISTORY_SYNC_MAX_ENTRIES = 8000;
+
+function toHistorySyncKey(userId: string, chatId: string): string {
+  return `${userId}::${normalizeChatId(chatId)}`;
+}
+
+function pruneHistorySyncRequests(now: number = Date.now()): void {
+  historySyncRequests.forEach((requestedAt, key) => {
+    if (now - requestedAt > HISTORY_SYNC_TTL_MS) {
+      historySyncRequests.delete(key);
+    }
+  });
+
+  if (historySyncRequests.size <= HISTORY_SYNC_MAX_ENTRIES) {
+    return;
+  }
+
+  const sortedByAge: Array<[string, number]> = [];
+  historySyncRequests.forEach((requestedAt, key) => {
+    sortedByAge.push([key, requestedAt]);
+  });
+  sortedByAge.sort((a, b) => a[1] - b[1]);
+
+  const overflow = historySyncRequests.size - HISTORY_SYNC_MAX_ENTRIES;
+  for (let i = 0; i < overflow; i++) {
+    const entry = sortedByAge[i];
+    if (!entry) break;
+    historySyncRequests.delete(entry[0]);
+  }
+}
+
+export function markHistorySyncRequested(userId: string, chatId: string): void {
+  const normalizedChatId = normalizeChatId(chatId);
+  if (!normalizedChatId) return;
+
+  const now = Date.now();
+  historySyncRequests.set(toHistorySyncKey(userId, normalizedChatId), now);
+  pruneHistorySyncRequests(now);
+}
+
+export function markHistorySyncRequestedMany(userId: string, chatIds: string[]): void {
+  if (chatIds.length === 0) return;
+  for (const chatId of chatIds) {
+    markHistorySyncRequested(userId, chatId);
+  }
+}
+
+export function hasRecentHistorySyncRequest(
+  userId: string,
+  chatId: string,
+  now: number = Date.now()
+): boolean {
+  const key = toHistorySyncKey(userId, chatId);
+  const requestedAt = historySyncRequests.get(key);
+  if (!requestedAt) {
+    return false;
+  }
+  if (now - requestedAt > HISTORY_SYNC_TTL_MS) {
+    historySyncRequests.delete(key);
+    return false;
+  }
+  return true;
+}
+
+export function shouldStoreHistorySyncMessage(userId: string, chatId: string): boolean {
+  const normalizedChatId = normalizeChatId(chatId);
+  if (!normalizedChatId) {
+    return false;
+  }
+  return hasRecentHistorySyncRequest(userId, normalizedChatId);
+}
+
+export function clearHistorySyncRequestsForUser(userId: string): void {
+  const prefix = `${userId}::`;
+  const keysToDelete: string[] = [];
+  historySyncRequests.forEach((_, key) => {
+    if (key.startsWith(prefix)) {
+      keysToDelete.push(key);
+    }
+  });
+  keysToDelete.forEach((key) => historySyncRequests.delete(key));
 }
 
 

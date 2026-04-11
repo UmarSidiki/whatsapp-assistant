@@ -26,7 +26,9 @@ import {
   getSocketFor,
   toJid,
   clearBackfillTrackerForUser,
+  clearHistorySyncRequestsForUser,
   clearContactNamesForUser,
+  shouldStoreHistorySyncMessage,
   upsertContactName,
   upsertContactNames,
 } from "./socket";
@@ -129,6 +131,7 @@ function clearAuthState(userId: string): void {
 
 function clearRuntimeState(userId: string): void {
   clearBackfillTrackerForUser(userId);
+  clearHistorySyncRequestsForUser(userId);
   clearMimicSettingsForUser(userId);
   clearBufferedMessagesForUser(userId);
   clearContactNamesForUser(userId);
@@ -220,7 +223,8 @@ export async function init(userId: string): Promise<void> {
       auth: state,
       printQRInTerminal: false,
       logger: pino({ level: "silent" }) as any,
-      syncFullHistory: true,
+      // Keep connect-time sync lean; chat history is pulled lazily per opened chat.
+      syncFullHistory: false,
       markOnlineOnConnect: false,
       browser: ["Ubuntu", "Chrome", "110.0.5481.77"],
     });
@@ -418,7 +422,7 @@ export async function init(userId: string): Promise<void> {
       }
     });
 
-    // ── Store bulk history from initial sync ─────────────────────────────────
+    // ── Store lazily-requested history sync batches ──────────────────────────
     sock.ev.on("messaging-history.set" as any, async (data: any) => {
       if (!isCurrentSocket(userId, sock)) return;
 
@@ -456,6 +460,7 @@ export async function init(userId: string): Promise<void> {
       });
 
       let stored = 0;
+      let skippedUnrequested = 0;
       const touchedChatIds = new Set<string>();
       const chatHistoryLimit = await getChatHistoryLimit(userId);
 
@@ -466,6 +471,10 @@ export async function init(userId: string): Promise<void> {
           const jid = msg.key?.remoteJid ?? "";
           const chatType = resolveChatTypeFromJid(jid);
           if (!chatType) continue;
+          if (!shouldStoreHistorySyncMessage(userId, jid)) {
+            skippedUnrequested++;
+            continue;
+          }
           const text = extractTextFromMessage(msg.message);
           const hasPayload = Boolean(msg.message);
           if (!hasPayload && !text) continue;
@@ -539,6 +548,7 @@ export async function init(userId: string): Promise<void> {
         userId,
         storedCount: stored,
         trimmedChats: touchedChatIds.size,
+        skippedUnrequested,
       });
     });
 

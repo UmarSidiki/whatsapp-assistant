@@ -13,7 +13,6 @@ import { aiSettings, messageLog } from "../../../database";
 import { extractTextFromMessage, getContextInfoFromMessage, getSocketFor, toJid } from "../../whatsapp/services";
 import { handleAutoReply } from "../../auto-reply/services";
 import { getMessageCount, getMessageHistory, getMessageCountSince } from "../../ai/services";
-import { BACKFILL_TARGET_MESSAGES, hasRecentBackfillRequest, markBackfillRequested } from "../../whatsapp/services";
 const MEDIA_DOWNLOAD_COMMAND_LOGGER = pino({ level: "silent" });
 const MIN_MESSAGES_FOR_PERSONA = 10;
 const MIN_MESSAGES_FOR_AI_DESCRIPTION = 20;
@@ -597,9 +596,9 @@ async function sendQuotedMediaCopy(
  *
  * Flow:
  *  1. Check if AI is enabled globally
- *  2. Check message count – if < 500, request history backfill (best-effort)
+ *  2. Check message count for persona/response context decisions
  *  3. Check if persona exists – if not, extract and save it
- *  4. Generate AI response using persona + last 50 messages
+ *  4. Generate AI response using persona + recent context
  *  5. Send segmented response to contact
  */
 export async function handleAIResponse(
@@ -682,33 +681,9 @@ export async function handleAIResponse(
 
     logger.info(`${tag} AI is enabled`, { userId });
 
-    // ── Step 2: Check message count & request backfill ────────────────────
+    // ── Step 2: Check message count ───────────────────────────────────────
     const msgCount = await getMessageCount(userId, contactPhone);
     logger.info(`${tag} Step 2: Message count = ${msgCount}`, { userId });
-
-    if (msgCount < BACKFILL_TARGET_MESSAGES) {
-      const backfillKey = `${userId}_${contactPhone}`;
-      if (!hasRecentBackfillRequest(backfillKey)) {
-        markBackfillRequested(backfillKey);
-        logger.info(`${tag} Requesting history backfill (have ${msgCount}, want ${BACKFILL_TARGET_MESSAGES})`, { userId });
-        try {
-          const sock = getSocketFor(userId);
-          // fetchMessageHistory is fire-and-forget; results arrive via messages.upsert/append
-          // NOTE: This method may not exist in all Baileys versions - wrapped in try/catch
-          await (sock as any).fetchMessageHistory(
-            BACKFILL_TARGET_MESSAGES,
-            { remoteJid: jid, fromMe: false, id: "" },
-            0
-          );
-          logger.info(`${tag} History backfill requested`, { userId });
-        } catch (e) {
-          logger.warn(`${tag} History backfill failed (non-critical)`, {
-            userId,
-            error: String(e),
-          });
-        }
-      }
-    }
 
     // ── Step 3: Ensure persona exists (only for mimic mode) ───────────────
     if (aiMode === "mimic") {

@@ -10,6 +10,7 @@ import {
   extractTextFromMessage,
   formatContactRefForDisplay,
   getContactName,
+  markHistorySyncRequestedMany,
   getSessionIfExists,
   getSocketFor,
   jidToContactId,
@@ -27,7 +28,8 @@ export type ChatScope = DashboardChatScope;
 
 export const DEFAULT_CHAT_HISTORY_LIMIT = 1000;
 const MIN_CHAT_HISTORY_LIMIT = 100;
-const MAX_CHAT_HISTORY_LIMIT = 10000;
+const MAX_CHAT_HISTORY_LIMIT = 1000;
+const MAX_CHATS_PER_USER = 100;
 const warnedMissingRelations = new Set<string>();
 const warnedOptionalWaColumns = new Set<string>();
 
@@ -514,7 +516,7 @@ async function getPersistedChats(userId: string, scope: ChatScope): Promise<Dash
       .from(waChat)
       .where(whereClause)
       .orderBy(desc(waChat.lastMessageAt))
-      .limit(300);
+      .limit(MAX_CHATS_PER_USER);
 
     return rows.map((r) => {
       const chatType = r.chatType as ChatType;
@@ -718,7 +720,7 @@ export async function getChats(userId: string, scope: ChatScope = "direct"): Pro
       .where(whereClause)
       .groupBy(waChatMessage.chatId, waChatMessage.chatType)
       .orderBy(desc(sql<Date>`max(${waChatMessage.timestamp})`))
-      .limit(200);
+      .limit(MAX_CHATS_PER_USER);
 
     const chatIds = grouped.map((row) => row.chatId);
     const latestPerChat = chatIds.length
@@ -802,7 +804,7 @@ export async function getChats(userId: string, scope: ChatScope = "direct"): Pro
 
   const merged = mergeDashboardChatLists(primary, live, legacy, persisted, contactFallback);
 
-  return merged;
+  return merged.slice(0, MAX_CHATS_PER_USER);
 }
 
 export interface ThreadMessageRow {
@@ -834,6 +836,9 @@ interface DecodedThreadCursor {
 const DEFAULT_THREAD_PAGE_LIMIT = 20;
 const MAX_THREAD_PAGE_LIMIT = 100;
 const MAX_BOOTSTRAP_OFFSET = 5000;
+const ON_DEMAND_HISTORY_WAIT_MS = 2500;
+const MAX_ON_DEMAND_FETCH_COUNT = 1000;
+const MIN_ON_DEMAND_OLDER_FETCH_COUNT = 50;
 
 function normalizeThreadLimit(limit: number | undefined): number {
   if (!Number.isFinite(limit)) return DEFAULT_THREAD_PAGE_LIMIT;
@@ -845,6 +850,30 @@ function normalizeThreadLimit(limit: number | undefined): number {
 function normalizeBootstrapOffset(offset: number | undefined): number {
   if (!Number.isFinite(offset)) return 0;
   return Math.max(0, Math.min(MAX_BOOTSTRAP_OFFSET, Math.floor(Number(offset))));
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+
+  const normalizedConcurrency = Math.max(1, Math.floor(concurrency));
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const runners = Array.from({ length: Math.min(normalizedConcurrency, items.length) }, async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await worker(items[currentIndex] as T, currentIndex);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
 }
 
 function encodeThreadCursor(input: { timestamp: Date; id: string }): string {
@@ -921,6 +950,29 @@ async function getThreadCandidateChatIds(userId: string, chatId: string): Promis
   return [...candidateIds];
 }
 
+function resolveOnDemandFetchCount(limit: number, hasCursor: boolean): number {
+  if (hasCursor) {
+    return Math.min(MAX_ON_DEMAND_FETCH_COUNT, Math.max(limit * 3, MIN_ON_DEMAND_OLDER_FETCH_COUNT));
+  }
+  return Math.max(1, Math.min(50, limit));
+}
+
+async function requestOnDemandThreadHistory(
+  userId: string,
+  chatId: string,
+  candidateChatIds: string[],
+  limit: number,
+  hasCursor: boolean
+): Promise<void> {
+  const sock = getSocketFor(userId);
+  markHistorySyncRequestedMany(userId, [chatId, ...candidateChatIds]);
+  await (sock as any).fetchMessageHistory(
+    resolveOnDemandFetchCount(limit, hasCursor),
+    { remoteJid: chatId, fromMe: false, id: "" },
+    0
+  );
+}
+
 export async function listThreadMessagesPage(
   userId: string,
   chatId: string,
@@ -963,31 +1015,34 @@ export async function listThreadMessagesPage(
       .orderBy(desc(waChatMessage.timestamp), desc(waChatMessage.id))
       .limit(limit + 1);
 
-    if (rows.length === 0 && !decodedCursor) {
-      const liveRows = getLiveThreadMessages(userId, normalized, limit);
-      if (liveRows.length > 0) {
-        return {
-          messages: toDescendingLiveRows(liveRows, limit),
-          hasMore: false,
-          nextCursor: undefined,
-        };
+    if (rows.length === 0) {
+      if (!decodedCursor) {
+        const liveRows = getLiveThreadMessages(userId, normalized, limit);
+        if (liveRows.length > 0) {
+          return {
+            messages: toDescendingLiveRows(liveRows, limit),
+            hasMore: false,
+            nextCursor: undefined,
+          };
+        }
       }
 
-      // First page and nothing local: attempt on-demand history sync from WhatsApp.
+      // Nothing local for this page: pull on-demand history for just this chat.
       try {
-        const sock = getSocketFor(userId);
-        await (sock as any).fetchMessageHistory(
-          Math.min(limit, 50),
-          { remoteJid: normalized, fromMe: false, id: "" },
-          0
+        await requestOnDemandThreadHistory(
+          userId,
+          normalized,
+          candidateList,
+          limit,
+          Boolean(decodedCursor)
         );
 
-        await new Promise((resolve) => setTimeout(resolve, 2500));
+        await new Promise((resolve) => setTimeout(resolve, ON_DEMAND_HISTORY_WAIT_MS));
 
         const retryRows = await db
           .select(selectShape)
           .from(waChatMessage)
-          .where(and(eq(waChatMessage.userId, userId), threadFilter))
+          .where(and(eq(waChatMessage.userId, userId), threadFilter, cursorFilter))
           .orderBy(desc(waChatMessage.timestamp), desc(waChatMessage.id))
           .limit(limit + 1);
 
@@ -1002,13 +1057,15 @@ export async function listThreadMessagesPage(
           };
         }
 
-        const retryLive = getLiveThreadMessages(userId, normalized, limit);
-        if (retryLive.length > 0) {
-          return {
-            messages: toDescendingLiveRows(retryLive, limit),
-            hasMore: false,
-            nextCursor: undefined,
-          };
+        if (!decodedCursor) {
+          const retryLive = getLiveThreadMessages(userId, normalized, limit);
+          if (retryLive.length > 0) {
+            return {
+              messages: toDescendingLiveRows(retryLive, limit),
+              hasMore: false,
+              nextCursor: undefined,
+            };
+          }
         }
       } catch {
         // best-effort; fall through to empty page
@@ -1090,14 +1147,13 @@ export async function getChatBootstrap(
   threadLimit: number = DEFAULT_THREAD_PAGE_LIMIT,
   offset: number = 0
 ): Promise<ChatBootstrapPage> {
-  const normalizedChatLimit = Math.max(1, Math.min(100, Math.floor(chatLimit)));
+  const normalizedChatLimit = Math.max(1, Math.min(MAX_CHATS_PER_USER, Math.floor(chatLimit)));
   const normalizedThreadLimit = normalizeThreadLimit(threadLimit);
   const normalizedOffset = normalizeBootstrapOffset(offset);
   const allChats = await getChats(userId, scope);
   const chats = allChats.slice(normalizedOffset, normalizedOffset + normalizedChatLimit);
 
-  const pages = await Promise.all(
-    chats.map(async (chat) => {
+  const pages = await mapWithConcurrency(chats, 6, async (chat) => {
       const page = await listThreadMessagesPage(userId, chat.id, {
         limit: normalizedThreadLimit,
       });
@@ -1105,8 +1161,7 @@ export async function getChatBootstrap(
         chat,
         page,
       };
-    })
-  );
+    });
 
   const serializedChats = pages.map(({ chat, page }) => ({
     ...chat,
