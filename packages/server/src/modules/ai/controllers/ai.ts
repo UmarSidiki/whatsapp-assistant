@@ -9,7 +9,7 @@ import { getContactName } from "../../whatsapp/services";
 import * as apiUsageService from "../services";
 import { db } from "../../../database";
 import { aiSettings, apiKeys, waChatMessage, aiPersona } from "../../../database";
-import { and, eq, sql, desc } from "drizzle-orm";
+import { and, eq, sql, desc, inArray } from "drizzle-orm";
 import { logger } from "../../../core/logger";
 import { auth } from "../../../core/auth";
 
@@ -33,6 +33,20 @@ async function extractUserIdFromContext(c: Context): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+function parsePositiveIntQuery(value: string | undefined, fallback: number, max: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+}
+
+function parseNonNegativeIntQuery(value: string | undefined, fallback: number, max: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.min(parsed, max);
 }
 
 // ─── Endpoint Handlers ─────────────────────────────────────────────────────────
@@ -672,9 +686,11 @@ export async function getContacts(c: Context) {
       throw new ProviderError("Unauthorized: No user session", 401);
     }
 
+    const limit = parsePositiveIntQuery(c.req.query("limit"), 20, 100);
+    const offset = parseNonNegativeIntQuery(c.req.query("offset"), 0, 5000);
+
     try {
-      // Get top 20 contacts by message count and recency, grouped with stats
-      const msgStats = await db
+      const msgStatsRows = await db
         .select({
           contactPhone: waChatMessage.contactPhone,
           count: sql<number>`count(*)`,
@@ -685,18 +701,21 @@ export async function getContacts(c: Context) {
           and(
             eq(waChatMessage.userId, userId),
             eq(waChatMessage.chatType, "direct"),
-            sql`${waChatMessage.contactPhone} IS NOT NULL`
+            sql`${waChatMessage.contactPhone} IS NOT NULL`,
+            sql`${waChatMessage.contactPhone} <> ''`,
+            sql`${waChatMessage.contactPhone} NOT IN ('me', 'contact', 'ai', 'assistant', 'user')`
           )
         )
         .groupBy(waChatMessage.contactPhone)
         .orderBy(desc(sql<Date>`max(${waChatMessage.timestamp})`))
-        .limit(20);
+        .limit(limit + 1)
+        .offset(offset);
 
-      const validMsgStats = msgStats.filter(
-        (stat): stat is typeof stat & { contactPhone: string } => {
-          const phone = stat.contactPhone;
-          return typeof phone === "string" && phone.length > 0 && !aiAssistantService.isSystemContactId(phone);
-        }
+      const hasMore = msgStatsRows.length > limit;
+      const pageRows = hasMore ? msgStatsRows.slice(0, limit) : msgStatsRows;
+
+      const validMsgStats = pageRows.filter(
+        (stat): stat is typeof stat & { contactPhone: string } => typeof stat.contactPhone === "string" && stat.contactPhone.length > 0
       );
 
       // Get persona lastUpdated for these top contacts
@@ -709,7 +728,7 @@ export async function getContacts(c: Context) {
                 lastUpdated: aiPersona.lastUpdated,
               })
               .from(aiPersona)
-              .where(eq(aiPersona.userId, userId))
+              .where(and(eq(aiPersona.userId, userId), inArray(aiPersona.contactPhone, contactPhones)))
           : [];
 
       const personaMap = new Map(personaRows.map((p) => [p.contactPhone, p.lastUpdated]));
@@ -731,7 +750,15 @@ export async function getContacts(c: Context) {
         };
       });
 
-      return { contacts };
+      return {
+        contacts,
+        pagination: {
+          limit,
+          offset,
+          hasMore,
+          nextOffset: hasMore ? offset + limit : undefined,
+        },
+      };
     } catch (error) {
       logger.error("Failed to get contacts", { error: String(error), userId });
       throw new ProviderError("Failed to retrieve contacts", 500);

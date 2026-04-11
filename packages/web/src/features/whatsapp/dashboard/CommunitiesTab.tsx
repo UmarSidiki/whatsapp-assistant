@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Hash, Radio, RefreshCw, Search, Users } from "lucide-react";
+import { Hash, Loader2, Radio, RefreshCw, Search, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiResponseError, fetchJson } from "@/lib/api-utils";
 import { cn } from "@/lib/utils";
-import { WhatsAppThreadPanel } from "./WhatsAppThreadPanel";
+import { WhatsAppThreadPanel, type ThreadMessage, type ThreadPageSeed } from "./WhatsAppThreadPanel";
 
 type ChatType = "group" | "broadcast" | "channel";
 
@@ -18,6 +18,20 @@ interface CommunityChat {
   lastMessageAt?: string;
   messageCount: number;
 }
+
+interface BootstrapCommunityChat extends CommunityChat {
+  recentMessages: ThreadMessage[];
+  hasMoreMessages: boolean;
+  nextCursor?: string;
+}
+
+interface BootstrapCommunitiesResponse {
+  chats: BootstrapCommunityChat[];
+  hasMore?: boolean;
+  nextOffset?: number;
+}
+
+const COMMUNITY_BOOTSTRAP_PAGE_SIZE = 50;
 
 function getIcon(type: ChatType) {
   switch (type) {
@@ -51,6 +65,10 @@ export function CommunitiesTab({ apiUrl }: { apiUrl: string }) {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [chats, setChats] = useState<CommunityChat[]>([]);
+  const [seededThreads, setSeededThreads] = useState<Record<string, ThreadPageSeed>>({});
+  const [hasMoreChats, setHasMoreChats] = useState(false);
+  const [nextChatsOffset, setNextChatsOffset] = useState(0);
+  const [loadingMoreChats, setLoadingMoreChats] = useState(false);
   const [selectedId, setSelectedId] = useState<string>("");
 
   const load = async () => {
@@ -58,11 +76,39 @@ export function CommunitiesTab({ apiUrl }: { apiUrl: string }) {
     setError("");
 
     try {
-      const payload = await fetchJson<{ chats: CommunityChat[] }>(
-        `${apiUrl}/api/whatsapp/chats?type=communities`,
+      const payload = await fetchJson<BootstrapCommunitiesResponse>(
+        `${apiUrl}/api/whatsapp/chats/bootstrap?type=communities&chatLimit=${COMMUNITY_BOOTSTRAP_PAGE_SIZE}&threadLimit=20&offset=0`,
         { credentials: "include" }
       );
-      const list = Array.isArray(payload.chats) ? payload.chats : [];
+
+      const rawList = Array.isArray(payload.chats) ? payload.chats : [];
+
+      const seeded: Record<string, ThreadPageSeed> = {};
+      for (const chat of rawList) {
+        seeded[chat.id] = {
+          messages: Array.isArray(chat.recentMessages) ? chat.recentMessages : [],
+          hasMore: Boolean(chat.hasMoreMessages),
+          nextCursor: chat.nextCursor,
+        };
+      }
+      setSeededThreads(seeded);
+
+      const list = rawList.map<CommunityChat>((chat) => ({
+        id: chat.id,
+        title: chat.title,
+        type: chat.type,
+        lastMessage: chat.lastMessage,
+        lastMessageAt: chat.lastMessageAt,
+        messageCount: chat.messageCount,
+      }));
+
+      setHasMoreChats(Boolean(payload.hasMore));
+      setNextChatsOffset(
+        typeof payload.nextOffset === "number"
+          ? payload.nextOffset
+          : rawList.length
+      );
+
       setChats(list);
       setSelectedId((prev) => {
         if (prev && list.some((c) => c.id === prev)) return prev;
@@ -83,6 +129,64 @@ export function CommunitiesTab({ apiUrl }: { apiUrl: string }) {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiUrl]);
+
+  const handleLoadMoreChats = async () => {
+    if (loadingMoreChats || !hasMoreChats) return;
+
+    setLoadingMoreChats(true);
+    try {
+      const payload = await fetchJson<BootstrapCommunitiesResponse>(
+        `${apiUrl}/api/whatsapp/chats/bootstrap?type=communities&chatLimit=${COMMUNITY_BOOTSTRAP_PAGE_SIZE}&threadLimit=20&offset=${nextChatsOffset}`,
+        { credentials: "include" }
+      );
+
+      const rows = Array.isArray(payload.chats) ? payload.chats : [];
+      if (rows.length > 0) {
+        const seededChunk: Record<string, ThreadPageSeed> = {};
+        const mapped = rows.map<CommunityChat>((chat) => {
+          seededChunk[chat.id] = {
+            messages: Array.isArray(chat.recentMessages) ? chat.recentMessages : [],
+            hasMore: Boolean(chat.hasMoreMessages),
+            nextCursor: chat.nextCursor,
+          };
+
+          return {
+            id: chat.id,
+            title: chat.title,
+            type: chat.type,
+            lastMessage: chat.lastMessage,
+            lastMessageAt: chat.lastMessageAt,
+            messageCount: chat.messageCount,
+          };
+        });
+
+        setSeededThreads((prev) => ({ ...prev, ...seededChunk }));
+        setChats((prev) => {
+          const byId = new Map(prev.map((chat) => [chat.id, chat]));
+          for (const chat of mapped) {
+            const existing = byId.get(chat.id);
+            byId.set(chat.id, existing ? { ...existing, ...chat } : chat);
+          }
+          return [...byId.values()];
+        });
+      }
+
+      setHasMoreChats(Boolean(payload.hasMore));
+      setNextChatsOffset(
+        typeof payload.nextOffset === "number"
+          ? payload.nextOffset
+          : nextChatsOffset + rows.length
+      );
+    } catch (error) {
+      if (error instanceof ApiResponseError) {
+        setError(error.message);
+      } else {
+        setError("Failed to load more communities");
+      }
+    } finally {
+      setLoadingMoreChats(false);
+    }
+  };
 
   const selected = useMemo(
     () => chats.find((c) => c.id === selectedId),
@@ -179,13 +283,37 @@ export function CommunitiesTab({ apiUrl }: { apiUrl: string }) {
                 </button>
               );
             })}
+
+            {hasMoreChats ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-2 w-full"
+                onClick={() => void handleLoadMoreChats()}
+                disabled={loadingMoreChats}
+              >
+                {loadingMoreChats ? (
+                  <>
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                    Loading more chats...
+                  </>
+                ) : (
+                  "Load more chats"
+                )}
+              </Button>
+            ) : null}
           </div>
         )}
       </CardContent>
     </Card>
 
     {selected ? (
-      <WhatsAppThreadPanel apiUrl={apiUrl} chatId={selected.id} title={selected.title} />
+      <WhatsAppThreadPanel
+        apiUrl={apiUrl}
+        chatId={selected.id}
+        title={selected.title}
+        initialPage={seededThreads[selected.id]}
+      />
     ) : (
       <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
         Select a community chat to send and view messages.

@@ -44,6 +44,15 @@ const main = async () => {
     const appliedMigrations = await getAppliedMigrationsCount();
     const existingCoreTables = await getExistingCoreTablesCount();
 
+    // Drift scenario: migration history exists, but the app's core tables are gone.
+    // In this state, drizzle migrate reports success while applying nothing.
+    if (appliedMigrations > 0 && existingCoreTables === 0) {
+      throw new Error(
+        "Schema drift detected: migration history exists but core tables are missing. " +
+          "Run 'npm run db:push --workspace server' once to repair this database."
+      );
+    }
+
     // If schema exists but migration history is empty (e.g. bootstrapped via db:push),
     // skip SQL migrations to avoid "relation already exists" errors.
     if (appliedMigrations === 0 && existingCoreTables > 0) {

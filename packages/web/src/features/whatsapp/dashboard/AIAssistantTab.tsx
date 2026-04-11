@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  Loader2,
   RotateCcw,
   Eye,
   EyeOff,
@@ -78,6 +79,7 @@ interface APITestResult {
 }
 
 const CUSTOM_MODEL_VALUE = "__custom__";
+const CONTACTS_PAGE_SIZE = 20;
 
 // Common timezone options (offset in hours)
 const TIMEZONES = [
@@ -163,6 +165,9 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
 
   // Contacts and per-contact settings
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactsHasMore, setContactsHasMore] = useState(false);
+  const [contactsNextOffset, setContactsNextOffset] = useState(0);
 
   // API test state
   const [testLoading, setTestLoading] = useState(false);
@@ -211,7 +216,7 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
   // Load initial data
   useEffect(() => {
     void loadSettings();
-    void loadContacts();
+    void loadContacts(true);
     void loadUsageStats();
     void loadGroqApiKeys();
     void loadGeminiApiKeys();
@@ -273,18 +278,52 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
     }
   };
 
-  const loadContacts = async () => {
+  const loadContacts = async (reset = false) => {
+    const offset = reset ? 0 : contactsNextOffset;
+    if (contactsLoading) return;
+
+    setContactsLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/api/ai/contacts`, {
+      const params = new URLSearchParams();
+      params.set("limit", String(CONTACTS_PAGE_SIZE));
+      params.set("offset", String(offset));
+
+      const res = await fetch(`${apiUrl}/api/ai/contacts?${params.toString()}`, {
         credentials: "include",
       });
       if (res.ok) {
         const data = await res.json();
-        setContacts(Array.isArray(data.contacts) ? data.contacts : []);
+        const nextContacts = Array.isArray(data.contacts) ? data.contacts : [];
+        const hasMore = Boolean(data?.pagination?.hasMore);
+        const nextOffset =
+          typeof data?.pagination?.nextOffset === "number"
+            ? data.pagination.nextOffset
+            : offset + nextContacts.length;
+
+        setContacts((prev) => {
+          const base = reset ? [] : prev;
+          const byPhone = new Map<string, Contact>();
+          for (const contact of base) {
+            byPhone.set(contact.phone, contact);
+          }
+          for (const contact of nextContacts) {
+            byPhone.set(contact.phone, contact);
+          }
+          return [...byPhone.values()];
+        });
+
+        setContactsHasMore(hasMore);
+        setContactsNextOffset(nextOffset);
       }
     } catch (err) {
       console.error("Failed to load contacts:", err);
+    } finally {
+      setContactsLoading(false);
     }
+  };
+
+  const handleLoadMoreContacts = () => {
+    void loadContacts(false);
   };
 
   const loadGroqApiKeys = async () => {
@@ -1305,7 +1344,12 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
         </CardHeader>
         {personaSectionOpen && (
           <CardContent>
-            {contacts.length === 0 ? (
+            {contacts.length === 0 && contactsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading contacts...
+              </div>
+            ) : contacts.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No active contacts yet
               </p>
@@ -1353,6 +1397,27 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                     </div>
                   </div>
                 ))}
+
+                {contactsHasMore ? (
+                  <div className="pt-1">
+                    <Button
+                      onClick={handleLoadMoreContacts}
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      disabled={contactsLoading}
+                    >
+                      {contactsLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Loading more contacts...
+                        </>
+                      ) : (
+                        "Load more contacts"
+                      )}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             )}
           </CardContent>
@@ -1377,7 +1442,12 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
         </CardHeader>
         {perContactSectionOpen && (
           <CardContent>
-            {contacts.length === 0 ? (
+            {contacts.length === 0 && contactsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading contacts...
+              </div>
+            ) : contacts.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No active contacts yet
               </p>
@@ -1455,6 +1525,27 @@ export function AIAssistantTab({ apiUrl }: { apiUrl: string }) {
                     )}
                   </div>
                 ))}
+
+                {contactsHasMore ? (
+                  <div className="pt-1">
+                    <Button
+                      onClick={handleLoadMoreContacts}
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      disabled={contactsLoading}
+                    >
+                      {contactsLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Loading more contacts...
+                        </>
+                      ) : (
+                        "Load more contacts"
+                      )}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             )}
           </CardContent>

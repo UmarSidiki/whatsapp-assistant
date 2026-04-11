@@ -478,7 +478,7 @@ export async function init(userId: string): Promise<void> {
           if (chatType === "direct") {
             const contactPhone = jidToContactId(jid);
             if (!msg.key.fromMe && typeof msg.pushName === "string" && msg.pushName.trim()) {
-              upsertContactName(userId, contactPhone, msg.pushName);
+              upsertContactName(userId, contactPhone, msg.pushName, "notify");
             }
           }
 
@@ -569,7 +569,7 @@ export async function init(userId: string): Promise<void> {
           typeof msg.pushName === "string" &&
           msg.pushName.trim()
         ) {
-          upsertContactName(userId, contactPhone, msg.pushName);
+          upsertContactName(userId, contactPhone, msg.pushName, "notify");
         }
         const sender = msg.key.fromMe ? "me" : "contact";
 

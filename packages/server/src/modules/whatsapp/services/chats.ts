@@ -8,6 +8,7 @@ import type { DashboardChat, DashboardChatScope, DashboardChatType } from "../ty
 import { normalizeChatId, resolveChatTypeFromJid } from "./chat-jid";
 import {
   extractTextFromMessage,
+  formatContactRefForDisplay,
   getContactName,
   getSessionIfExists,
   getSocketFor,
@@ -305,7 +306,7 @@ function getContactsAsChats(userId: string, scope: ChatScope): DashboardChat[] {
     const jid = toJid(contactId);
     return {
       id: jid,
-      title: name || contactId,
+      title: resolveDirectChatTitle(userId, jid, name),
       type: "direct",
       target: contactId,
       contactId,
@@ -317,6 +318,17 @@ function getContactsAsChats(userId: string, scope: ChatScope): DashboardChat[] {
       messageCount: 0,
     } satisfies DashboardChat;
   });
+}
+
+function resolveDirectChatTitle(userId: string, chatId: string, ...candidates: unknown[]): string {
+  const fallback = formatContactRefForDisplay(chatId) || chatId;
+  const resolved = getContactName(userId, chatId).trim();
+
+  if (resolved && resolved !== fallback) {
+    return resolved;
+  }
+
+  return getNonEmptyString(...candidates) || resolved || fallback;
 }
 
 function clampHistoryLimit(limit: number): number {
@@ -434,13 +446,15 @@ export async function persistChatsToDb(
     if (!chatType) continue;
 
     const title =
-      chat.name?.trim() ||
-      chat.subject?.trim() ||
-      chat.notify?.trim() ||
-      chat.verifiedName?.trim() ||
-      chat.short?.trim() ||
-      (chatType === "direct" ? getContactName(userId, chatId) : "") ||
-      undefined;
+      chatType === "direct"
+        ? resolveDirectChatTitle(userId, chatId, chat.name, chat.verifiedName, chat.notify, chat.short)
+        :
+            chat.name?.trim() ||
+            chat.subject?.trim() ||
+            chat.notify?.trim() ||
+            chat.verifiedName?.trim() ||
+            chat.short?.trim() ||
+            undefined;
 
     const rawTs = chat.conversationTimestamp;
     let epochSec: number | undefined;
@@ -508,7 +522,7 @@ async function getPersistedChats(userId: string, scope: ChatScope): Promise<Dash
         chatType === "direct" ? normalizeContactId(jidToContactId(r.chatId)) : "";
       return {
         id: r.chatId,
-        title: r.title || getContactName(userId, r.chatId) || r.chatId,
+        title: chatType === "direct" ? resolveDirectChatTitle(userId, r.chatId, r.title) : r.title || r.chatId,
         type: chatType,
         target: contactId || r.chatId,
         contactId: contactId || undefined,
@@ -556,9 +570,9 @@ export async function storeChatMessage(
 
   const directContactId = chatType === "direct" ? normalizeContactId(jidToContactId(chatId)) : "";
   const derivedTitle =
-    input.title?.trim() ||
-    (chatType === "direct" ? getContactName(userId, input.jid) : "") ||
-    chatId;
+    chatType === "direct"
+      ? resolveDirectChatTitle(userId, chatId, input.title)
+      : input.title?.trim() || chatId;
 
   const waPayload = input.waMessage ? maybeSerializeWaDownloadPayload(input.waMessage) : null;
   const waMessageId = input.waMessageId?.trim() || input.waMessage?.key?.id?.trim() || null;
@@ -647,10 +661,7 @@ function getChatsFromLiveStoreFallback(userId: string, scope: ChatScope): Dashbo
         const contactId = normalizeContactId(jidToContactId(chatId));
         return {
           id: chatId,
-          title:
-            getNonEmptyString(chat.name, chat.notify, chat.verifiedName, chat.short) ||
-            getContactName(userId, chatId) ||
-            chatId,
+          title: resolveDirectChatTitle(userId, chatId, chat.name, chat.verifiedName, chat.notify, chat.short),
           type: chatType,
           target: contactId || chatId,
           contactId: contactId || undefined,
@@ -733,7 +744,7 @@ export async function getChats(userId: string, scope: ChatScope = "direct"): Pro
 
         if (chatType === "direct") {
           const contactId = normalizeContactId(jidToContactId(row.chatId));
-          const title = latest?.title?.trim() || getContactName(userId, row.chatId) || row.chatId;
+          const title = resolveDirectChatTitle(userId, row.chatId, latest?.title);
           return {
             id: row.chatId,
             title,
@@ -803,9 +814,99 @@ export interface ThreadMessageRow {
   hasMediaPayload: boolean;
 }
 
-export async function listThreadMessages(userId: string, chatId: string, limit = 150): Promise<ThreadMessageRow[]> {
+export interface ThreadMessagesPage {
+  messages: ThreadMessageRow[];
+  hasMore: boolean;
+  nextCursor?: string;
+}
+
+export interface ChatBootstrapItem extends DashboardChat {
+  recentMessages: ThreadMessageRow[];
+  hasMoreMessages: boolean;
+  nextCursor?: string;
+}
+
+interface DecodedThreadCursor {
+  timestamp: string;
+  id: string;
+}
+
+const DEFAULT_THREAD_PAGE_LIMIT = 20;
+const MAX_THREAD_PAGE_LIMIT = 100;
+const MAX_BOOTSTRAP_OFFSET = 5000;
+
+function normalizeThreadLimit(limit: number | undefined): number {
+  if (!Number.isFinite(limit)) return DEFAULT_THREAD_PAGE_LIMIT;
+  const numeric = Math.floor(Number(limit));
+  if (numeric <= 0) return DEFAULT_THREAD_PAGE_LIMIT;
+  return Math.min(MAX_THREAD_PAGE_LIMIT, numeric);
+}
+
+function normalizeBootstrapOffset(offset: number | undefined): number {
+  if (!Number.isFinite(offset)) return 0;
+  return Math.max(0, Math.min(MAX_BOOTSTRAP_OFFSET, Math.floor(Number(offset))));
+}
+
+function encodeThreadCursor(input: { timestamp: Date; id: string }): string {
+  return Buffer.from(
+    JSON.stringify({
+      ts: new Date(input.timestamp).toISOString(),
+      id: input.id,
+    })
+  ).toString("base64url");
+}
+
+function decodeThreadCursor(cursor?: string): DecodedThreadCursor | null {
+  if (!cursor?.trim()) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
+      ts?: string;
+      id?: string;
+    };
+    if (!decoded?.ts || !decoded?.id) return null;
+    const parsedTs = Date.parse(decoded.ts);
+    if (Number.isNaN(parsedTs)) return null;
+    return {
+      timestamp: new Date(parsedTs).toISOString(),
+      id: decoded.id,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function toThreadMessageRow(row: {
+  id: string;
+  sender: "me" | "contact";
+  message: string;
+  timestamp: Date;
+  mediaKind?: string | null;
+  waMessagePayload?: string | null;
+}): ThreadMessageRow {
+  return {
+    id: row.id,
+    sender: row.sender,
+    message: row.message,
+    timestamp: new Date(row.timestamp).toISOString(),
+    mediaKind: row.mediaKind ?? null,
+    hasMediaPayload: Boolean(row.waMessagePayload),
+  };
+}
+
+function toDescendingLiveRows(rows: ThreadMessageRow[], limit: number): ThreadMessageRow[] {
+  const sorted = [...rows].sort((a, b) => {
+    const aTs = Date.parse(a.timestamp);
+    const bTs = Date.parse(b.timestamp);
+    if (aTs !== bTs) return bTs - aTs;
+    return b.id.localeCompare(a.id);
+  });
+  return sorted.slice(0, limit);
+}
+
+async function getThreadCandidateChatIds(userId: string, chatId: string): Promise<string[]> {
   const normalized = normalizeChatId(chatId);
   const candidateIds = new Set<string>([normalized]);
+
   if (resolveChatTypeFromJid(normalized) === "direct") {
     try {
       const phone = await resolvePhoneNumber(userId, normalized);
@@ -816,38 +917,63 @@ export async function listThreadMessages(userId: string, chatId: string, limit =
       // best effort
     }
   }
-  const candidateList = [...candidateIds];
+
+  return [...candidateIds];
+}
+
+export async function listThreadMessagesPage(
+  userId: string,
+  chatId: string,
+  options?: {
+    limit?: number;
+    cursor?: string;
+  }
+): Promise<ThreadMessagesPage> {
+  const normalized = normalizeChatId(chatId);
+  const limit = normalizeThreadLimit(options?.limit);
+  const decodedCursor = decodeThreadCursor(options?.cursor);
+  const candidateList = await getThreadCandidateChatIds(userId, normalized);
+
+  const threadFilter =
+    candidateList.length === 1
+      ? eq(waChatMessage.chatId, normalized)
+      : inArray(waChatMessage.chatId, candidateList);
+
+  const cursorFilter = decodedCursor
+    ? sql`(
+        ${waChatMessage.timestamp} < ${decodedCursor.timestamp}
+        OR (${waChatMessage.timestamp} = ${decodedCursor.timestamp} AND ${waChatMessage.id} < ${decodedCursor.id})
+      )`
+    : undefined;
+
+  const selectShape = {
+    id: waChatMessage.id,
+    sender: waChatMessage.sender,
+    message: waChatMessage.message,
+    timestamp: waChatMessage.timestamp,
+    mediaKind: waChatMessage.mediaKind,
+    waMessagePayload: waChatMessage.waMessagePayload,
+  } as const;
+
   try {
     const rows = await db
-      .select({
-        id: waChatMessage.id,
-        sender: waChatMessage.sender,
-        message: waChatMessage.message,
-        timestamp: waChatMessage.timestamp,
-        mediaKind: waChatMessage.mediaKind,
-        waMessagePayload: waChatMessage.waMessagePayload,
-      })
+      .select(selectShape)
       .from(waChatMessage)
-      .where(
-        and(
-          eq(waChatMessage.userId, userId),
-          candidateList.length === 1
-            ? eq(waChatMessage.chatId, normalized)
-            : inArray(waChatMessage.chatId, candidateList)
-        )
-      )
-      .orderBy(asc(waChatMessage.timestamp), asc(waChatMessage.id))
-      .limit(limit);
+      .where(and(eq(waChatMessage.userId, userId), threadFilter, cursorFilter))
+      .orderBy(desc(waChatMessage.timestamp), desc(waChatMessage.id))
+      .limit(limit + 1);
 
-    if (rows.length === 0) {
+    if (rows.length === 0 && !decodedCursor) {
       const liveRows = getLiveThreadMessages(userId, normalized, limit);
       if (liveRows.length > 0) {
-        return liveRows.map((r) => ({ ...r }));
+        return {
+          messages: toDescendingLiveRows(liveRows, limit),
+          hasMore: false,
+          nextCursor: undefined,
+        };
       }
 
-      // No messages found — trigger an on-demand history sync from Baileys.
-      // This sends a request to WhatsApp servers; the response arrives via
-      // messaging-history.set event and will populate the DB for next load.
+      // First page and nothing local: attempt on-demand history sync from WhatsApp.
       try {
         const sock = getSocketFor(userId);
         await (sock as any).fetchMessageHistory(
@@ -856,67 +982,61 @@ export async function listThreadMessages(userId: string, chatId: string, limit =
           0
         );
 
-        // Wait briefly for the history response to arrive via messaging-history.set
-        await new Promise((r) => setTimeout(r, 2500));
+        await new Promise((resolve) => setTimeout(resolve, 2500));
 
-        // Check live registry again — history may have populated it
-        const retryLive = getLiveThreadMessages(userId, normalized, limit);
-        if (retryLive.length > 0) {
-          return retryLive.map((r) => ({ ...r }));
-        }
-
-        // Also check DB — messages may have been stored by the history handler
         const retryRows = await db
-          .select({
-            id: waChatMessage.id,
-            sender: waChatMessage.sender,
-            message: waChatMessage.message,
-            timestamp: waChatMessage.timestamp,
-            mediaKind: waChatMessage.mediaKind,
-            waMessagePayload: waChatMessage.waMessagePayload,
-          })
+          .select(selectShape)
           .from(waChatMessage)
-          .where(
-            and(
-              eq(waChatMessage.userId, userId),
-              candidateList.length === 1
-                ? eq(waChatMessage.chatId, normalized)
-                : inArray(waChatMessage.chatId, candidateList)
-            )
-          )
-          .orderBy(asc(waChatMessage.timestamp), asc(waChatMessage.id))
-          .limit(limit);
+          .where(and(eq(waChatMessage.userId, userId), threadFilter))
+          .orderBy(desc(waChatMessage.timestamp), desc(waChatMessage.id))
+          .limit(limit + 1);
 
         if (retryRows.length > 0) {
-          return retryRows.map((r) => ({
-            id: r.id,
-            sender: r.sender,
-            message: r.message,
-            timestamp: new Date(r.timestamp).toISOString(),
-            mediaKind: r.mediaKind ?? null,
-            hasMediaPayload: Boolean(r.waMessagePayload),
-          }));
+          const hasMore = retryRows.length > limit;
+          const pageRows = hasMore ? retryRows.slice(0, limit) : retryRows;
+          const last = pageRows[pageRows.length - 1];
+          return {
+            messages: pageRows.map((row) => toThreadMessageRow(row)),
+            hasMore,
+            nextCursor: hasMore && last ? encodeThreadCursor({ timestamp: last.timestamp, id: last.id }) : undefined,
+          };
+        }
+
+        const retryLive = getLiveThreadMessages(userId, normalized, limit);
+        if (retryLive.length > 0) {
+          return {
+            messages: toDescendingLiveRows(retryLive, limit),
+            hasMore: false,
+            nextCursor: undefined,
+          };
         }
       } catch {
-        // best-effort — socket may be disconnected or API unavailable
+        // best-effort; fall through to empty page
       }
     }
 
-    return rows.map((r) => ({
-      id: r.id,
-      sender: r.sender,
-      message: r.message,
-      timestamp: new Date(r.timestamp).toISOString(),
-      mediaKind: r.mediaKind ?? null,
-      hasMediaPayload: Boolean(r.waMessagePayload),
-    }));
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const last = pageRows[pageRows.length - 1];
+
+    return {
+      messages: pageRows.map((row) => toThreadMessageRow(row)),
+      hasMore,
+      nextCursor: hasMore && last ? encodeThreadCursor({ timestamp: last.timestamp, id: last.id }) : undefined,
+    };
   } catch (error) {
     if (isMissingRelationError(error)) {
-      logMissingRelationOnce("listThreadMessages", error);
-      return [];
+      logMissingRelationOnce("listThreadMessagesPage", error);
+      return {
+        messages: [],
+        hasMore: false,
+        nextCursor: undefined,
+      };
     }
+
     if (isUndefinedColumnError(error)) {
-      logOptionalWaColumnsOnce("listThreadMessages", String(error));
+      logOptionalWaColumnsOnce("listThreadMessagesPage", String(error));
+
       const rowsBasic = await db
         .select({
           id: waChatMessage.id,
@@ -925,30 +1045,83 @@ export async function listThreadMessages(userId: string, chatId: string, limit =
           timestamp: waChatMessage.timestamp,
         })
         .from(waChatMessage)
-        .where(
-          and(
-            eq(waChatMessage.userId, userId),
-            candidateList.length === 1
-              ? eq(waChatMessage.chatId, normalized)
-              : inArray(waChatMessage.chatId, candidateList)
-          )
-        )
-        .orderBy(asc(waChatMessage.timestamp), asc(waChatMessage.id))
-        .limit(limit);
+        .where(and(eq(waChatMessage.userId, userId), threadFilter, cursorFilter))
+        .orderBy(desc(waChatMessage.timestamp), desc(waChatMessage.id))
+        .limit(limit + 1);
 
+      const hasMore = rowsBasic.length > limit;
+      const pageRows = hasMore ? rowsBasic.slice(0, limit) : rowsBasic;
+      const last = pageRows[pageRows.length - 1];
 
-
-      return rowsBasic.map((r) => ({
-        id: r.id,
-        sender: r.sender,
-        message: r.message,
-        timestamp: new Date(r.timestamp).toISOString(),
-        mediaKind: null,
-        hasMediaPayload: false,
-      }));
+      return {
+        messages: pageRows.map((row) => ({
+          id: row.id,
+          sender: row.sender,
+          message: row.message,
+          timestamp: new Date(row.timestamp).toISOString(),
+          mediaKind: null,
+          hasMediaPayload: false,
+        })),
+        hasMore,
+        nextCursor: hasMore && last ? encodeThreadCursor({ timestamp: last.timestamp, id: last.id }) : undefined,
+      };
     }
+
     throw error;
   }
+}
+
+export async function listThreadMessages(userId: string, chatId: string, limit = 150): Promise<ThreadMessageRow[]> {
+  const page = await listThreadMessagesPage(userId, chatId, { limit });
+  return [...page.messages].reverse();
+}
+
+export interface ChatBootstrapPage {
+  chats: ChatBootstrapItem[];
+  hasMore: boolean;
+  nextOffset?: number;
+  totalChats: number;
+}
+
+export async function getChatBootstrap(
+  userId: string,
+  scope: ChatScope,
+  chatLimit: number = 50,
+  threadLimit: number = DEFAULT_THREAD_PAGE_LIMIT,
+  offset: number = 0
+): Promise<ChatBootstrapPage> {
+  const normalizedChatLimit = Math.max(1, Math.min(100, Math.floor(chatLimit)));
+  const normalizedThreadLimit = normalizeThreadLimit(threadLimit);
+  const normalizedOffset = normalizeBootstrapOffset(offset);
+  const allChats = await getChats(userId, scope);
+  const chats = allChats.slice(normalizedOffset, normalizedOffset + normalizedChatLimit);
+
+  const pages = await Promise.all(
+    chats.map(async (chat) => {
+      const page = await listThreadMessagesPage(userId, chat.id, {
+        limit: normalizedThreadLimit,
+      });
+      return {
+        chat,
+        page,
+      };
+    })
+  );
+
+  const serializedChats = pages.map(({ chat, page }) => ({
+    ...chat,
+    recentMessages: page.messages,
+    hasMoreMessages: page.hasMore,
+    nextCursor: page.nextCursor,
+  }));
+
+  const hasMore = normalizedOffset + serializedChats.length < allChats.length;
+  return {
+    chats: serializedChats,
+    hasMore,
+    nextOffset: hasMore ? normalizedOffset + serializedChats.length : undefined,
+    totalChats: allChats.length,
+  };
 }
 
 function guessMimetypeFromProto(message: proto.IMessage | null | undefined): string {
@@ -960,6 +1133,18 @@ function guessMimetypeFromProto(message: proto.IMessage | null | undefined): str
     message?.documentMessage?.mimetype ||
     "application/octet-stream"
   );
+}
+
+function resolveMediaDownloadStatusCode(error: unknown): number | null {
+  const rawCode =
+    (error as any)?.output?.statusCode ??
+    (error as any)?.data?.statusCode ??
+    (error as any)?.statusCode ??
+    (error as any)?.cause?.output?.statusCode ??
+    null;
+
+  const code = Number(rawCode);
+  return Number.isFinite(code) ? code : null;
 }
 
 export async function downloadStoredMessageMedia(
@@ -998,10 +1183,26 @@ export async function downloadStoredMessageMedia(
 
   const sock = getSocketFor(userId);
   const stub = { key: parsed.key, message: parsed.message } as proto.IWebMessageInfo;
-  const buffer = await downloadMediaMessage(stub as any, "buffer", {}, {
-    logger: MEDIA_DOWNLOAD_LOGGER as any,
-    reuploadRequest: sock.updateMediaMessage,
-  });
+  let buffer: unknown;
+  try {
+    buffer = await downloadMediaMessage(stub as any, "buffer", {}, {
+      logger: MEDIA_DOWNLOAD_LOGGER as any,
+      reuploadRequest: sock.updateMediaMessage,
+    });
+  } catch (error) {
+    const statusCode = resolveMediaDownloadStatusCode(error);
+    if (statusCode === 404 || statusCode === 410) {
+      throw new ServiceError("Media is no longer available on WhatsApp. Ask the sender to resend it.", 410);
+    }
+
+    logger.warn("Failed to download stored media", {
+      userId,
+      messageRowId,
+      statusCode,
+      error: String(error),
+    });
+    throw new ServiceError("Failed to download media from WhatsApp", 502);
+  }
 
   return { buffer: buffer as Buffer, mimetype: guessMimetypeFromProto(parsed.message) };
 }

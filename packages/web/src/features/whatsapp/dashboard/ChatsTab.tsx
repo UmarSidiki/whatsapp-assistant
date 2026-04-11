@@ -4,6 +4,7 @@ import {
   Bot,
   CalendarClock,
   Hash,
+  Loader2,
   MessageCircle,
   Radio,
   RefreshCw,
@@ -19,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { ApiResponseError, fetchJson } from "@/lib/api-utils";
 import { cn } from "@/lib/utils";
-import { WhatsAppThreadPanel } from "./WhatsAppThreadPanel";
+import { WhatsAppThreadPanel, type ThreadMessage, type ThreadPageSeed } from "./WhatsAppThreadPanel";
 
 type ChatType = "direct" | "group" | "broadcast" | "channel" | "unknown";
 type DashboardTargetPage = "schedule" | "ai-assistant";
@@ -38,6 +39,18 @@ interface ChatItem {
   messageCount?: number;
 }
 
+interface BootstrapChatItem extends ChatItem {
+  recentMessages: ThreadMessage[];
+  hasMoreMessages: boolean;
+  nextCursor?: string;
+}
+
+interface BootstrapChatsResponse {
+  chats: BootstrapChatItem[];
+  hasMore?: boolean;
+  nextOffset?: number;
+}
+
 interface AIContact {
   phone: string;
   mimicMode: boolean;
@@ -48,6 +61,8 @@ interface ScheduledMessage {
   phone: string;
   status: "pending" | "sent" | "failed";
 }
+
+const CHAT_BOOTSTRAP_PAGE_SIZE = 50;
 
 function normalizeTarget(value: string): string {
   const trimmed = value.trim().toLowerCase();
@@ -113,6 +128,10 @@ export function ChatsTab({
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string>("");
   const [mimicByContact, setMimicByContact] = useState<Record<string, boolean>>({});
+  const [seededThreads, setSeededThreads] = useState<Record<string, ThreadPageSeed>>({});
+  const [hasMoreChats, setHasMoreChats] = useState(false);
+  const [nextChatsOffset, setNextChatsOffset] = useState(0);
+  const [loadingMoreChats, setLoadingMoreChats] = useState(false);
   const [schedules, setSchedules] = useState<ScheduledMessage[]>([]);
   const [mimicSaving, setMimicSaving] = useState(false);
   const [scheduleMessage, setScheduleMessage] = useState("");
@@ -137,22 +156,56 @@ export function ChatsTab({
     setError("");
 
     try {
-      const [chatPayload, contactsPayload] = await Promise.all([
-        fetchJson<{ chats: ChatItem[] }>(`${apiUrl}/api/whatsapp/chats?type=direct`, {
-          credentials: "include",
-        }),
+      const [bootstrapPayload, contactsPayload] = await Promise.all([
+        fetchJson<BootstrapChatsResponse>(
+          `${apiUrl}/api/whatsapp/chats/bootstrap?type=direct&chatLimit=${CHAT_BOOTSTRAP_PAGE_SIZE}&threadLimit=20&offset=0`,
+          {
+            credentials: "include",
+          }
+        ),
         fetchJson<{ contacts: AIContact[] }>(`${apiUrl}/api/ai/contacts`, {
           credentials: "include",
         }).catch(() => ({ contacts: [] })),
       ]);
 
-      const directChats = Array.isArray(chatPayload.chats) ? chatPayload.chats : [];
-      const chatList = directChats.filter((chat) => chat.type === "direct");
-      setChats(chatList);
+      const bootstrapChats = Array.isArray(bootstrapPayload.chats) ? bootstrapPayload.chats : [];
+
+      const seeded: Record<string, ThreadPageSeed> = {};
+      for (const chat of bootstrapChats) {
+        seeded[chat.id] = {
+          messages: Array.isArray(chat.recentMessages) ? chat.recentMessages : [],
+          hasMore: Boolean(chat.hasMoreMessages),
+          nextCursor: chat.nextCursor,
+        };
+      }
+      setSeededThreads(seeded);
+
+      setHasMoreChats(Boolean(bootstrapPayload.hasMore));
+      setNextChatsOffset(
+        typeof bootstrapPayload.nextOffset === "number"
+          ? bootstrapPayload.nextOffset
+          : bootstrapChats.length
+      );
+
+      const directChats = bootstrapChats.map<ChatItem>((chat) => ({
+        id: chat.id,
+        title: chat.title,
+        type: chat.type,
+        target: chat.target,
+        contactId: chat.contactId,
+        lastMessage: chat.lastMessage,
+        lastMessageAt: chat.lastMessageAt,
+        unreadCount: chat.unreadCount,
+        isPinned: chat.isPinned,
+        isArchived: chat.isArchived,
+        messageCount: chat.messageCount,
+      }));
+
+      setChats(directChats);
 
       setSelectedId((prev) => {
-        if (prev && chatList.some((chat) => chat.id === prev)) return prev;
-        return chatList[0]?.id ?? "";
+        if (prev && directChats.some((chat) => chat.id === prev)) return prev;
+        return directChats[0]?.id ?? "";
       });
 
       const mimicMap: Record<string, boolean> = {};
@@ -176,6 +229,71 @@ export function ChatsTab({
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiUrl]);
+
+  const handleLoadMoreChats = async () => {
+    if (loadingMoreChats || !hasMoreChats) return;
+
+    setLoadingMoreChats(true);
+    try {
+      const payload = await fetchJson<BootstrapChatsResponse>(
+        `${apiUrl}/api/whatsapp/chats/bootstrap?type=direct&chatLimit=${CHAT_BOOTSTRAP_PAGE_SIZE}&threadLimit=20&offset=${nextChatsOffset}`,
+        {
+          credentials: "include",
+        }
+      );
+
+      const rows = Array.isArray(payload.chats) ? payload.chats : [];
+      if (rows.length > 0) {
+        const seededChunk: Record<string, ThreadPageSeed> = {};
+        const mappedRows = rows.map<ChatItem>((chat) => {
+          seededChunk[chat.id] = {
+            messages: Array.isArray(chat.recentMessages) ? chat.recentMessages : [],
+            hasMore: Boolean(chat.hasMoreMessages),
+            nextCursor: chat.nextCursor,
+          };
+
+          return {
+            id: chat.id,
+            title: chat.title,
+            type: chat.type,
+            target: chat.target,
+            contactId: chat.contactId,
+            lastMessage: chat.lastMessage,
+            lastMessageAt: chat.lastMessageAt,
+            unreadCount: chat.unreadCount,
+            isPinned: chat.isPinned,
+            isArchived: chat.isArchived,
+            messageCount: chat.messageCount,
+          };
+        });
+
+        setSeededThreads((prev) => ({ ...prev, ...seededChunk }));
+        setChats((prev) => {
+          const byId = new Map(prev.map((chat) => [chat.id, chat]));
+          for (const chat of mappedRows) {
+            const existing = byId.get(chat.id);
+            byId.set(chat.id, existing ? { ...existing, ...chat } : chat);
+          }
+          return [...byId.values()];
+        });
+      }
+
+      setHasMoreChats(Boolean(payload.hasMore));
+      setNextChatsOffset(
+        typeof payload.nextOffset === "number"
+          ? payload.nextOffset
+          : nextChatsOffset + rows.length
+      );
+    } catch (e) {
+      if (e instanceof ApiResponseError) {
+        setError(e.message);
+      } else {
+        setError("Failed to load more chats");
+      }
+    } finally {
+      setLoadingMoreChats(false);
+    }
+  };
 
   const filteredChats = useMemo(() => {
     const search = query.trim().toLowerCase();
@@ -367,6 +485,25 @@ export function ChatsTab({
                   </button>
                 );
               })}
+
+              {hasMoreChats ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-2 w-full"
+                  onClick={() => void handleLoadMoreChats()}
+                  disabled={loadingMoreChats}
+                >
+                  {loadingMoreChats ? (
+                    <>
+                      <Loader2 className="mr-2 size-4 animate-spin" />
+                      Loading more chats...
+                    </>
+                  ) : (
+                    "Load more chats"
+                  )}
+                </Button>
+              ) : null}
             </div>
           )}
         </CardContent>
@@ -382,6 +519,7 @@ export function ChatsTab({
               apiUrl={apiUrl}
               chatId={selectedChat.id}
               title={selectedChat.title}
+              initialPage={seededThreads[selectedChat.id]}
             />
           </div>
         ) : (

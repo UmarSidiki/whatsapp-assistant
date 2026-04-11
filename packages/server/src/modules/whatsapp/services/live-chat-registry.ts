@@ -1,6 +1,6 @@
 import type { DashboardChat, DashboardChatScope } from "../types/dashboard-chat";
 import { normalizeChatId, resolveChatTypeFromJid, type ChatType } from "./chat-jid";
-import { getContactName, jidToContactId, normalizeContactId } from "./socket";
+import { formatContactRefForDisplay, getContactName, jidToContactId, normalizeContactId } from "./socket";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -39,6 +39,17 @@ function toEpochMs(value: unknown): number | undefined {
     if (!Number.isNaN(parsed)) return parsed;
   }
   return undefined;
+}
+
+function resolveDirectChatTitle(userId: string, chatId: string, ...candidates: unknown[]): string {
+  const fallback = formatContactRefForDisplay(chatId) || chatId;
+  const resolved = getContactName(userId, chatId).trim();
+
+  if (resolved && resolved !== fallback) {
+    return resolved;
+  }
+
+  return getNonEmptyString(...candidates) || resolved || fallback;
 }
 
 function getScopeTypes(scope: DashboardChatScope): ChatType[] {
@@ -124,10 +135,7 @@ function recordToDashboard(userId: string, rawId: string, chat: Record<string, u
     const contactId = normalizeContactId(jidToContactId(chatId));
     return {
       id: chatId,
-      title:
-        getNonEmptyString(chat.name, chat.notify, chat.verifiedName, chat.short) ||
-        getContactName(userId, chatId) ||
-        chatId,
+      title: resolveDirectChatTitle(userId, chatId, chat.name, chat.verifiedName, chat.notify, chat.short),
       type: chatType,
       target: contactId || chatId,
       contactId: contactId || undefined,
@@ -182,6 +190,12 @@ export function ingestChatsUpdate(userId: string, updates: unknown): void {
         toEpochMs(rec.conversationTimestamp) ??
         toEpochMs(rec.lastMessageRecvTimestamp) ??
         toEpochMs(rec.lastMessageTimestamp);
+
+      const nextTitle =
+        existing.type === "direct"
+          ? resolveDirectChatTitle(userId, key, rec.name, rec.verifiedName, rec.notify)
+          : getNonEmptyString(rec.name, rec.subject, rec.notify) || existing.title;
+
       map.set(key, {
         ...existing,
         unreadCount: Number.isFinite(u) ? Math.max(0, Math.floor(u)) : existing.unreadCount,
@@ -189,7 +203,7 @@ export function ingestChatsUpdate(userId: string, updates: unknown): void {
           rec.pinned !== undefined ? Boolean(rec.pinned) : rec.pin !== undefined ? toNumber(rec.pin) > 0 : existing.isPinned,
         isArchived: rec.archive !== undefined ? Boolean(rec.archive) : rec.archived !== undefined ? Boolean(rec.archived) : existing.isArchived,
         lastMessageAt: epochMs ? new Date(epochMs).toISOString() : existing.lastMessageAt,
-        title: getNonEmptyString(rec.name, rec.subject, rec.notify) || existing.title,
+        title: nextTitle,
       });
     } else {
       const row = recordToDashboard(userId, id, rec);
@@ -230,11 +244,7 @@ export function touchChatFromMessage(
     (chatType === "direct"
       ? {
           id: chatId,
-          title:
-            params.title?.trim() ||
-            getContactName(userId, chatId) ||
-            contactId ||
-            chatId,
+          title: resolveDirectChatTitle(userId, chatId, params.title, contactId),
           type: "direct",
           target: contactId || chatId,
           contactId: contactId || undefined,
@@ -265,9 +275,7 @@ export function touchChatFromMessage(
 
   const nextTitle =
     chatType === "direct"
-      ? params.title?.trim() && !params.title.includes("@")
-        ? params.title.trim()
-        : getContactName(userId, chatId) || base.title
+      ? resolveDirectChatTitle(userId, chatId, base.title)
       : params.title?.trim() || base.title;
 
   map.set(chatId, {

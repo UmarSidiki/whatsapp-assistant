@@ -47,6 +47,8 @@ const DEFAULT_PERSONA: Persona = {
   emotionalTone: "neutral",
 };
 
+const MIN_USER_MESSAGES_FOR_PERSONA = 10;
+
 // ─── Emoji Detection ──────────────────────────────────────────────────────────
 
 /**
@@ -403,8 +405,13 @@ export async function extractPersona(
       .filter((h) => h.sender === "me")
       .map((h) => h.message);
 
-    if (userMessages.length < 3) {
-      logger.warn("Not enough user messages for persona extraction", { userId, contactPhone, count: userMessages.length });
+    if (userMessages.length < MIN_USER_MESSAGES_FOR_PERSONA) {
+      logger.warn("Not enough user messages for persona extraction", {
+        userId,
+        contactPhone,
+        count: userMessages.length,
+        required: MIN_USER_MESSAGES_FOR_PERSONA,
+      });
       return DEFAULT_PERSONA;
     }
 

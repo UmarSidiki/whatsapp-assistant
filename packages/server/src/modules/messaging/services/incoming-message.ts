@@ -15,10 +15,20 @@ import { handleAutoReply } from "../../auto-reply/services";
 import { getMessageCount, getMessageHistory, getMessageCountSince } from "../../ai/services";
 import { BACKFILL_TARGET_MESSAGES, hasRecentBackfillRequest, markBackfillRequested } from "../../whatsapp/services";
 const MEDIA_DOWNLOAD_COMMAND_LOGGER = pino({ level: "silent" });
-const MIN_MESSAGES_FOR_PERSONA = 5;
+const MIN_MESSAGES_FOR_PERSONA = 10;
+const MIN_MESSAGES_FOR_AI_DESCRIPTION = 20;
 const PERSONA_CONTEXT_WINDOW = 1000;
-const PERSONA_REFRESH_NEW_MESSAGES_THRESHOLD = 25;
+const PERSONA_REFRESH_THRESHOLD_HOT = 20;
+const PERSONA_REFRESH_THRESHOLD_WARM = 30;
+const PERSONA_REFRESH_THRESHOLD_COLD = 50;
+const PERSONA_HOT_CONTACT_MIN_MESSAGES = 200;
+const PERSONA_WARM_CONTACT_MIN_MESSAGES = 80;
 const PERSONA_FORCE_REFRESH_AGE_MS = 12 * 60 * 60 * 1000;
+const PERSONA_ENRICHMENT_MAX_CONCURRENCY_PER_USER = 2;
+const PERSONA_ENRICHMENT_RETRY_ATTEMPTS = 2;
+
+const personaEnrichmentInFlight = new Set<string>();
+const personaEnrichmentByUser = new Map<string, number>();
 
 interface ParsedReminderIntent {
   task: string;
@@ -45,6 +55,129 @@ interface SpamCommandParams {
   message: string;
   count: number;
   delaySeconds: number;
+}
+
+function getPersonaRefreshThreshold(totalMessages: number): number {
+  if (totalMessages >= PERSONA_HOT_CONTACT_MIN_MESSAGES) return PERSONA_REFRESH_THRESHOLD_HOT;
+  if (totalMessages >= PERSONA_WARM_CONTACT_MIN_MESSAGES) return PERSONA_REFRESH_THRESHOLD_WARM;
+  return PERSONA_REFRESH_THRESHOLD_COLD;
+}
+
+function getPersonaRefreshReason(input: {
+  hasPersona: boolean;
+  forceRefreshByAge: boolean;
+  newMessagesSinceRefresh: number;
+  threshold: number;
+}): "missing" | "stale" | "new-messages" | "skip" {
+  if (!input.hasPersona) return "missing";
+  if (input.forceRefreshByAge) return "stale";
+  if (input.newMessagesSinceRefresh >= input.threshold) return "new-messages";
+  return "skip";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function generatePersonaDescriptionWithRetry(
+  userId: string,
+  contactPhone: string,
+  historyLimit: number
+): Promise<string | null> {
+  for (let attempt = 0; attempt <= PERSONA_ENRICHMENT_RETRY_ATTEMPTS; attempt++) {
+    try {
+      const history = await getMessageHistory(userId, contactPhone, historyLimit);
+      const userMessages = history.filter((item) => item.sender === "me");
+      if (userMessages.length < MIN_MESSAGES_FOR_AI_DESCRIPTION) {
+        return null;
+      }
+
+      const aiDescription = await generatePersonaAIDescription(userId, contactPhone, history);
+      if (aiDescription) {
+        return aiDescription;
+      }
+    } catch (error) {
+      if (attempt >= PERSONA_ENRICHMENT_RETRY_ATTEMPTS) {
+        logger.warn("[AI] Persona description retries exhausted", {
+          userId,
+          contactPhone,
+          attempt,
+          error: String(error),
+        });
+        break;
+      }
+      const delayMs = 500 * 2 ** attempt;
+      await sleep(delayMs);
+    }
+  }
+
+  return null;
+}
+
+function runPersonaEnrichmentInBackground(
+  userId: string,
+  contactPhone: string,
+  historyLimit: number
+): void {
+  const key = `${userId}:${contactPhone}`;
+  if (personaEnrichmentInFlight.has(key)) {
+    return;
+  }
+
+  const inFlightForUser = personaEnrichmentByUser.get(userId) ?? 0;
+  if (inFlightForUser >= PERSONA_ENRICHMENT_MAX_CONCURRENCY_PER_USER) {
+    logger.debug("[AI] Persona enrichment skipped due to concurrency cap", {
+      userId,
+      contactPhone,
+      inFlightForUser,
+    });
+    return;
+  }
+
+  personaEnrichmentInFlight.add(key);
+  personaEnrichmentByUser.set(userId, inFlightForUser + 1);
+
+  void (async () => {
+    try {
+      const aiDescription = await generatePersonaDescriptionWithRetry(
+        userId,
+        contactPhone,
+        historyLimit
+      );
+
+      if (!aiDescription) {
+        return;
+      }
+
+      const latestPersona = await getPersona(userId, contactPhone);
+      if (!latestPersona) {
+        return;
+      }
+
+      latestPersona.aiDescription = aiDescription;
+      await savePersona(userId, contactPhone, latestPersona);
+
+      logger.info("[AI] Persona description enriched asynchronously", {
+        userId,
+        contactPhone,
+        descriptionLength: aiDescription.length,
+      });
+    } catch (error) {
+      logger.warn("[AI] Persona async enrichment failed", {
+        userId,
+        contactPhone,
+        error: String(error),
+      });
+    } finally {
+      personaEnrichmentInFlight.delete(key);
+      const current = personaEnrichmentByUser.get(userId) ?? 1;
+      if (current <= 1) {
+        personaEnrichmentByUser.delete(userId);
+      } else {
+        personaEnrichmentByUser.set(userId, current - 1);
+      }
+    }
+  })();
 }
 
 function parseReminderIntent(input: string, now: Date = new Date()): ParsedReminderIntent | null {
@@ -583,54 +716,64 @@ export async function handleAIResponse(
       const personaLastUpdated = await getPersonaLastUpdated(userId, contactPhone);
       const nowMs = Date.now();
       const freshCount = msgCount;
+      const refreshThreshold = getPersonaRefreshThreshold(freshCount);
       const newMessagesSinceRefresh = personaLastUpdated
         ? await getMessageCountSince(userId, contactPhone, personaLastUpdated)
         : freshCount;
       const forceRefreshByAge =
         personaLastUpdated != null && nowMs - personaLastUpdated.getTime() > PERSONA_FORCE_REFRESH_AGE_MS;
+      const refreshReason = getPersonaRefreshReason({
+        hasPersona: Boolean(persona),
+        forceRefreshByAge,
+        newMessagesSinceRefresh,
+        threshold: refreshThreshold,
+      });
       const shouldRefreshPersona =
-        !persona ||
-        forceRefreshByAge ||
-        newMessagesSinceRefresh >= PERSONA_REFRESH_NEW_MESSAGES_THRESHOLD;
+        refreshReason !== "skip";
 
       logger.info(`${tag} Step 3: Persona refresh decision`, {
         userId,
         personaExists: Boolean(persona),
         freshCount,
         newMessagesSinceRefresh,
+        refreshThreshold,
         forceRefreshByAge,
+        refreshReason,
         shouldRefreshPersona,
       });
 
       if (shouldRefreshPersona) {
         if (freshCount >= MIN_MESSAGES_FOR_PERSONA) {
-          logger.info(`${tag} Generating persona from ${Math.min(freshCount, PERSONA_CONTEXT_WINDOW)} mutual messages`, { userId });
+          const extractionLimit = Math.min(freshCount, PERSONA_CONTEXT_WINDOW);
+          const extractionStartedAt = Date.now();
+          logger.info(`${tag} Generating persona from ${extractionLimit} mutual messages`, {
+            userId,
+            refreshReason,
+          });
 
-          // Rule-based extraction first (fast, always works)
-          persona = await extractPersona(userId, contactPhone, Math.min(freshCount, PERSONA_CONTEXT_WINDOW));
-
-          // Try to enrich with AI-generated voice description
-          logger.info(`${tag} Generating AI persona description`, { userId });
-          try {
-            const history = await getMessageHistory(userId, contactPhone, Math.min(freshCount, PERSONA_CONTEXT_WINDOW));
-            const aiDescription = await generatePersonaAIDescription(userId, contactPhone, history);
-            if (aiDescription) {
-              persona.aiDescription = aiDescription;
-              logger.info(`${tag} AI persona description generated`, { userId });
-            }
-          } catch (e) {
-            logger.warn(`${tag} AI persona description failed (using rule-based only)`, {
-              userId,
-              error: String(e),
-            });
-          }
+          // Rule-based extraction first (fast and deterministic).
+          persona = await extractPersona(userId, contactPhone, extractionLimit);
 
           await savePersona(userId, contactPhone, persona);
-          logger.info(`${tag} Persona saved`, { userId });
+          logger.info(`${tag} Persona saved`, {
+            userId,
+            refreshReason,
+            extractionMs: Date.now() - extractionStartedAt,
+          });
+
+          // AI voice enrichment runs asynchronously so replies are never blocked.
+          if (freshCount >= MIN_MESSAGES_FOR_AI_DESCRIPTION) {
+            runPersonaEnrichmentInBackground(userId, contactPhone, extractionLimit);
+          }
         } else {
           logger.info(
-            `${tag} Only ${freshCount} messages — continuing mimic with default persona fallback`,
-            { userId, requiredMessages: MIN_MESSAGES_FOR_PERSONA }
+            `${tag} Insufficient mutual history for persona refresh`,
+            {
+              userId,
+              freshCount,
+              requiredMessages: MIN_MESSAGES_FOR_PERSONA,
+              refreshReason,
+            }
           );
         }
       }

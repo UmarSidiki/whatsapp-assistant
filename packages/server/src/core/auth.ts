@@ -1,11 +1,23 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
+import { createHash } from "node:crypto";
 import { db } from "../database";
 import * as schema from "../database";
 
+function resolveAuthSecret(): string {
+  const envSecret = process.env.BETTER_AUTH_SECRET?.trim();
+  if (envSecret && envSecret.length >= 32) {
+    return envSecret;
+  }
+
+  // Dev-safe deterministic fallback to avoid weak static defaults.
+  const seed = `${process.cwd()}::${process.env.DATABASE_URL ?? "local-dev"}::better-auth`;
+  return createHash("sha256").update(seed).digest("hex");
+}
+
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
-  secret: process.env.BETTER_AUTH_SECRET ?? "dev-secret-change-in-production",
+  secret: resolveAuthSecret(),
   database: drizzleAdapter(db, {
     provider: "pg",
     schema,

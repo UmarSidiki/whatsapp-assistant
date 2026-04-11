@@ -17,7 +17,17 @@ import { ServiceError } from "../types";
 // ─── Per-user session state ───────────────────────────────────────────────────
 
 const sessions = new Map<string, WAState>();
-const contactNamesByUser = new Map<string, Map<string, string>>();
+const contactNamesByUser = new Map<string, Map<string, { name: string; priority: number }>>();
+
+const CONTACT_NAME_PRIORITY = {
+  saved: 10,
+  verified: 20,
+  notify: 30,
+  short: 40,
+  inferred: 50,
+} as const;
+
+type ContactNameSource = keyof typeof CONTACT_NAME_PRIORITY;
 
 function defaultState(): WAState {
   return { socket: null, status: "idle", qr: undefined, lastError: undefined, lastErrorAt: undefined };
@@ -50,10 +60,10 @@ export function removeSession(userId: string): void {
   contactNamesByUser.delete(userId);
 }
 
-function getOrCreateContactMap(userId: string): Map<string, string> {
+function getOrCreateContactMap(userId: string): Map<string, { name: string; priority: number }> {
   let map = contactNamesByUser.get(userId);
   if (!map) {
-    map = new Map<string, string>();
+    map = new Map<string, { name: string; priority: number }>();
     contactNamesByUser.set(userId, map);
   }
   return map;
@@ -63,13 +73,28 @@ export function clearContactNamesForUser(userId: string): void {
   contactNamesByUser.delete(userId);
 }
 
-export function upsertContactName(userId: string, contactId: string, name: string): void {
+export function upsertContactName(
+  userId: string,
+  contactId: string,
+  name: string,
+  source: ContactNameSource = "notify"
+): void {
   const normalizedId = normalizeContactId(contactId);
   const cleanedName = name.trim();
   if (!normalizedId || !cleanedName) {
     return;
   }
-  getOrCreateContactMap(userId).set(normalizedId, cleanedName);
+
+  const map = getOrCreateContactMap(userId);
+  const existing = map.get(normalizedId);
+  const nextPriority = CONTACT_NAME_PRIORITY[source];
+
+  // Keep the best available label per contact (saved > verified > notify > short).
+  if (existing && nextPriority > existing.priority) {
+    return;
+  }
+
+  map.set(normalizedId, { name: cleanedName, priority: nextPriority });
 }
 
 export function upsertContactNames(
@@ -88,23 +113,29 @@ export function upsertContactNames(
 ): void {
   for (const contact of contacts) {
     const contactId = contact.id ?? contact.jid;
-    const name =
-      contact.name?.trim() ||
-      contact.notify?.trim() ||
-      contact.verifiedName?.trim() ||
-      contact.short?.trim() ||
-      "";
-    if (!name) {
-      continue;
-    }
 
     const keys = new Set<string>();
     if (contactId) keys.add(contactId);
     if (contact.phoneNumber?.trim()) keys.add(contact.phoneNumber.trim());
     if (contact.lid?.trim()) keys.add(contact.lid.trim());
 
-    for (const key of keys) {
-      upsertContactName(userId, key, name);
+    if (keys.size === 0) {
+      continue;
+    }
+
+    const candidates: Array<{ value: string | undefined; source: ContactNameSource }> = [
+      { value: contact.name, source: "saved" },
+      { value: contact.verifiedName, source: "verified" },
+      { value: contact.notify, source: "notify" },
+      { value: contact.short, source: "short" },
+    ];
+
+    for (const candidate of candidates) {
+      const name = candidate.value?.trim();
+      if (!name) continue;
+      for (const key of keys) {
+        upsertContactName(userId, key, name, candidate.source);
+      }
     }
   }
 }
@@ -233,6 +264,26 @@ export function normalizeContactId(contactId: string): string {
   return (digitsOnly || rawUser).toLowerCase();
 }
 
+export function formatContactRefForDisplay(contactRef: string): string {
+  const trimmed = contactRef.trim();
+  if (!trimmed) return "";
+
+  const decoded = jidDecode(trimmed);
+  const server = decoded?.server?.toLowerCase() ?? "";
+  const user = (decoded?.user ?? (trimmed.includes("@") ? (trimmed.split("@")[0] ?? "") : trimmed)).trim();
+  if (!user) return trimmed;
+
+  const digits = user.replace(/\D/g, "");
+  const isPhoneJid = server === "s.whatsapp.net" || server === "c.us";
+  const isRawPhone = !server && /^\+?\d{6,}$/.test(trimmed);
+
+  if ((isPhoneJid || isRawPhone) && digits) {
+    return `+${digits}`;
+  }
+
+  return normalizeContactId(trimmed) || user || trimmed;
+}
+
 /** Extract text from common WhatsApp message payload variants (incl. wrapped messages). */
 export function extractTextFromMessage(message?: proto.IMessage | null): string {
   const content = extractMessageContent(message) ?? normalizeMessageContent(message);
@@ -295,15 +346,24 @@ export async function resolvePhoneNumber(userId: string, jid: string): Promise<s
   return jidToContactId(jid);
 }
 
-function readContactRecordName(contact: Record<string, unknown> | undefined): string {
-  if (!contact) return "";
-  return (
-    (typeof contact.name === "string" && contact.name.trim()) ||
-    (typeof contact.notify === "string" && contact.notify.trim()) ||
-    (typeof contact.verifiedName === "string" && contact.verifiedName.trim()) ||
-    (typeof contact.short === "string" && contact.short.trim()) ||
-    ""
-  );
+function readContactRecordName(
+  contact: Record<string, unknown> | undefined
+): { name: string; source: ContactNameSource } | null {
+  if (!contact) return null;
+
+  const saved = typeof contact.name === "string" ? contact.name.trim() : "";
+  if (saved) return { name: saved, source: "saved" };
+
+  const verified = typeof contact.verifiedName === "string" ? contact.verifiedName.trim() : "";
+  if (verified) return { name: verified, source: "verified" };
+
+  const notify = typeof contact.notify === "string" ? contact.notify.trim() : "";
+  if (notify) return { name: notify, source: "notify" };
+
+  const short = typeof contact.short === "string" ? contact.short.trim() : "";
+  if (short) return { name: short, source: "short" };
+
+  return null;
 }
 
 /**
@@ -312,19 +372,20 @@ function readContactRecordName(contact: Record<string, unknown> | undefined): st
 export function getContactName(userId: string, contactRef: string): string {
   try {
     const normalizedKey = normalizeContactId(contactRef);
+    const fallbackName = formatContactRefForDisplay(contactRef) || normalizedKey || contactRef;
     const cached = contactNamesByUser.get(userId)?.get(normalizedKey);
-    if (cached) {
-      return cached;
+    if (cached?.name) {
+      return cached.name;
     }
 
     const session = getSessionIfExists(userId);
     if (!session?.socket) {
-      return normalizedKey || contactRef;
+      return fallbackName;
     }
 
     const contacts = (session.store?.contacts ?? (session.socket as any)?.store?.contacts) as Record<string, any> | undefined;
     if (!contacts) {
-      return normalizedKey || contactRef;
+      return fallbackName;
     }
 
     const tryKeys: string[] = [];
@@ -341,20 +402,20 @@ export function getContactName(userId: string, contactRef: string): string {
     }
 
     for (const key of tryKeys) {
-      const n = readContactRecordName(contacts[key]);
-      if (n) {
-        upsertContactName(userId, normalizedKey || contactRef, n);
-        return n;
+      const candidate = readContactRecordName(contacts[key]);
+      if (candidate) {
+        upsertContactName(userId, normalizedKey || contactRef, candidate.name, candidate.source);
+        return candidate.name;
       }
     }
 
     for (const [key, c] of Object.entries(contacts)) {
       try {
         if (normalizeContactId(jidToContactId(key)) === normalizedKey) {
-          const n = readContactRecordName(c as Record<string, unknown>);
-          if (n) {
-            upsertContactName(userId, normalizedKey || contactRef, n);
-            return n;
+          const candidate = readContactRecordName(c as Record<string, unknown>);
+          if (candidate) {
+            upsertContactName(userId, normalizedKey || contactRef, candidate.name, candidate.source);
+            return candidate.name;
           }
         }
       } catch {
@@ -365,15 +426,15 @@ export function getContactName(userId: string, contactRef: string): string {
     const contactEntry = Object.entries(contacts).find(
       ([key]) => key.includes(contactRef) || key.startsWith(normalizedKey + "@")
     );
-    const fallbackName = readContactRecordName(contactEntry?.[1] as Record<string, unknown>);
-    if (fallbackName) {
-      upsertContactName(userId, normalizedKey || contactRef, fallbackName);
-      return fallbackName;
+    const fallbackCandidate = readContactRecordName(contactEntry?.[1] as Record<string, unknown>);
+    if (fallbackCandidate) {
+      upsertContactName(userId, normalizedKey || contactRef, fallbackCandidate.name, fallbackCandidate.source);
+      return fallbackCandidate.name;
     }
 
-    return normalizedKey || contactRef;
+    return fallbackName;
   } catch {
-    return contactRef;
+    return formatContactRefForDisplay(contactRef) || contactRef;
   }
 }
 
@@ -382,9 +443,9 @@ export function listKnownContacts(userId: string): Array<{ contactId: string; na
 
   const cached = contactNamesByUser.get(userId);
   if (cached) {
-    for (const [contactId, name] of cached.entries()) {
+    for (const [contactId, entry] of cached.entries()) {
       const normalized = normalizeContactId(contactId);
-      const cleaned = name.trim();
+      const cleaned = entry.name.trim();
       if (normalized && cleaned) {
         out.set(normalized, cleaned);
       }
@@ -396,19 +457,19 @@ export function listKnownContacts(userId: string): Array<{ contactId: string; na
   if (contacts) {
     for (const [key, value] of Object.entries(contacts)) {
       const record = (value && typeof value === "object" ? (value as Record<string, unknown>) : undefined) ?? {};
-      const name = readContactRecordName(record);
-      if (!name) continue;
+      const candidate = readContactRecordName(record);
+      if (!candidate?.name) continue;
       const contactId = normalizeContactId(jidToContactId(key));
       if (!contactId) continue;
       if (!out.has(contactId)) {
-        out.set(contactId, name);
+        out.set(contactId, candidate.name);
       }
     }
     for (const key of Object.keys(contacts)) {
       const contactId = normalizeContactId(jidToContactId(key));
       if (!contactId) continue;
       if (!out.has(contactId)) {
-        out.set(contactId, contactId);
+        out.set(contactId, formatContactRefForDisplay(contactId) || contactId);
       }
     }
   }

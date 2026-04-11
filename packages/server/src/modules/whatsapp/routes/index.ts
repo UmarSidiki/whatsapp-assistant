@@ -22,6 +22,7 @@ router.get("/status", connection.getStatus);
 router.post("/disconnect", connection.disconnect);
 router.get("/stats", stats.getStats);
 router.get("/chats", chats.getChats);
+router.get("/chats/bootstrap", chats.getChatsBootstrap);
 router.get("/chats/:chatId/messages", chats.getChatMessages);
 router.get("/messages/:messageId/media", chats.getMessageMedia);
 router.get("/settings", settings.getSettings);

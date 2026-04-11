@@ -1,5 +1,5 @@
 {
-  "id": "05e09191-6bce-49a9-b142-45aa5e204678",
+  "id": "dd46be09-41d5-443c-b49d-df17273b08c7",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -331,7 +331,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    
     "public.ai_persona": {
       "name": "ai_persona",
       "schema": "",
