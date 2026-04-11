@@ -30,8 +30,10 @@ export const DEFAULT_CHAT_HISTORY_LIMIT = 1000;
 const MIN_CHAT_HISTORY_LIMIT = 100;
 const MAX_CHAT_HISTORY_LIMIT = 1000;
 const MAX_CHATS_PER_USER = 100;
+const WA_CHAT_PRUNE_INTERVAL_MS = 60 * 1000;
 const warnedMissingRelations = new Set<string>();
 const warnedOptionalWaColumns = new Set<string>();
+const lastWaChatPruneByUser = new Map<string, number>();
 
 function isUndefinedColumnError(error: unknown): boolean {
   let cur: unknown = error;
@@ -337,6 +339,43 @@ function clampHistoryLimit(limit: number): number {
   return Math.max(MIN_CHAT_HISTORY_LIMIT, Math.min(MAX_CHAT_HISTORY_LIMIT, Math.floor(limit)));
 }
 
+function shouldRunWaChatPrune(userId: string, now: number = Date.now()): boolean {
+  const last = lastWaChatPruneByUser.get(userId) ?? 0;
+  if (now - last < WA_CHAT_PRUNE_INTERVAL_MS) {
+    return false;
+  }
+  lastWaChatPruneByUser.set(userId, now);
+  return true;
+}
+
+async function prunePersistedChatsForUser(userId: string, maxChats: number): Promise<void> {
+  const keepLimit = Math.max(1, Math.floor(maxChats));
+  const staleChatsSubquery = sql`
+    SELECT "chatId"
+    FROM wa_chat
+    WHERE "userId" = ${userId}
+      AND "chatId" NOT IN (
+        SELECT "chatId"
+        FROM wa_chat
+        WHERE "userId" = ${userId}
+        ORDER BY COALESCE("lastMessageAt", "updatedAt") DESC, COALESCE("conversationTimestamp", 0) DESC, "chatId" DESC
+        LIMIT ${keepLimit}
+      )
+  `;
+
+  // Drop message rows for chats outside the retention window.
+  await db.delete(waChatMessage).where(sql`
+    ${waChatMessage.userId} = ${userId}
+    AND ${waChatMessage.chatId} IN (${staleChatsSubquery})
+  `);
+
+  // Drop stale chat metadata rows.
+  await db.delete(waChat).where(sql`
+    ${waChat.userId} = ${userId}
+    AND ${waChat.chatId} IN (${staleChatsSubquery})
+  `);
+}
+
 export async function getChatHistoryLimit(userId: string): Promise<number> {
   try {
     const [settings] = await db
@@ -496,6 +535,16 @@ export async function persistChatsToDb(
       // best-effort — don't block the event handler
       logger.warn("Failed to persist chat", { userId, chatId, error: String(e) });
     }
+  }
+
+  if (!shouldRunWaChatPrune(userId)) {
+    return;
+  }
+
+  try {
+    await prunePersistedChatsForUser(userId, MAX_CHATS_PER_USER);
+  } catch (error) {
+    logger.warn("Failed to prune persisted chats", { userId, error: String(error) });
   }
 }
 
@@ -700,6 +749,13 @@ function getChatsFromLiveStoreFallback(userId: string, scope: ChatScope): Dashbo
 }
 
 export async function getChats(userId: string, scope: ChatScope = "direct"): Promise<DashboardChat[]> {
+  if (shouldRunWaChatPrune(userId)) {
+    // Run prune in background so reads stay fast.
+    void prunePersistedChatsForUser(userId, MAX_CHATS_PER_USER).catch((error) => {
+      logger.warn("Background wa_chat prune failed", { userId, error: String(error) });
+    });
+  }
+
   let primary: DashboardChat[] = [];
 
   try {
