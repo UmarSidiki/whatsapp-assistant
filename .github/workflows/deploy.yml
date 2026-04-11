@@ -36,15 +36,16 @@ jobs:
             # 4. Install dependencies and Build using Node
             export NODE_ENV=production
             
-            # --omit=dev keeps it light on your VPS by skipping test tools
-            npm install --omit=dev
-            
-            # If your migrations/build require devDependencies, use:
-            # npm install && npm run build && npm prune --production
+            # Build tooling (tsc, vite plugins) lives in devDependencies.
+            # Install with dev deps for build, then prune after build.
+            npm install --include=dev
 
             npm run db:migrate
             npm run db:push
             npm run build
+
+            # Keep production runtime light after assets are built.
+            npm prune --omit=dev
 
             # 5. Restart the service
             sudo systemctl restart whatsapp-assistant
